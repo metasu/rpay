@@ -101,11 +101,25 @@ SQL
 
 ### 3.3 导入数据库表结构
 
-数据库表结构来自旧版 PHP 支付网关（EasyPay），rpay 复用相同的表结构，共 29 张表。
+仓库提供经过 MySQL 实际导入验证的完整初始化文件：
 
-> **重要**：必须导入完整的数据库 dump。仅手动创建 `pay_config`/`pay_user`/`pay_order`/`pay_channel` 4 张表是不够的——`pay_type`、`pay_plugin` 等表缺失会导致 `/admin/channels` 等页面返回 500 Internal Server Error。
+- `database/schema.sql`：29 张 EasyPay 兼容表的完整结构；
+- `database/seed.sql`：支付类型、插件元数据和默认禁用的渠道模板，不含管理员、商户、订单或真实支付密钥。
 
-#### 方式 A：从旧服务器导入完整 dump（推荐）
+全新安装直接执行：
+
+```bash
+mysql -urpay -p -h127.0.0.1 rpay < database/schema.sql
+mysql -urpay -p -h127.0.0.1 rpay < database/seed.sql
+```
+
+> **重要**：必须导入完整结构。仅手动创建 `pay_config`/`pay_user`/`pay_order`/`pay_channel` 4 张表是不够的。所有渠道模板默认关闭，填写真实渠道配置后再逐个启用。
+
+#### 方式 A：使用仓库初始化文件（全新安装，推荐）
+
+上述两条命令即为完整初始化。重复导入是安全的：表使用 `IF NOT EXISTS`，种子使用 `ON DUPLICATE KEY UPDATE`，且不会覆盖渠道密钥或启用状态。
+
+#### 方式 B：从旧服务器导入完整 dump（迁移现有实例）
 
 ```bash
 # 从旧服务器导出（包含完整表结构和数据）
@@ -133,9 +147,9 @@ pay_type, pay_user, pay_weixin, pay_wework, pay_wxkfaccount, pay_wxkflog
 
 其中 `pay_type`（支付方式）和 `pay_plugin`（支付插件）是 channels 页面正常工作的前提。
 
-#### 方式 B：无旧数据库时手动建表（完整 29 张表）
+#### 附录：完整 29 表结构（历史参考）
 
-如果没有旧数据库 dump，需要手动创建所有 29 张表。以下为完整建表 SQL，可在宝塔 phpMyAdmin 中执行：
+以下内容与 `database/schema.sql` 对应，仅供查阅字段。实际部署请直接导入仓库 SQL 文件，避免复制不完整或因文档更新产生偏差：
 
 ```sql
 -- pay_config: 系统配置
@@ -637,29 +651,34 @@ CREATE TABLE IF NOT EXISTS `pay_wxkflog` (
   KEY `addtime` (`addtime`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
 
--- 插入 syskey（32位随机字符串，用于 session 加密）
-INSERT INTO `pay_config` (`k`, `v`) VALUES ('syskey', '替换为你的32位随机字符串')
-ON DUPLICATE KEY UPDATE `v` = VALUES(`v`);
 ```
 
-生成 syskey：
-
-```bash
-openssl rand -hex 16
-```
+`syskey` 不属于公共 schema 或 seed，必须按下方安全初始化步骤为每个实例独立生成。
 
 #### 插入初始配置数据（pay_config）
 
-以下 SQL 插入网关运行所需的最低配置项：
+`database/seed.sql` 已插入非敏感默认配置。服务启动前还必须生成实例唯一的 Session 密钥和管理员密码；不要使用固定密码或把真实密码提交到 Git：
+
+```bash
+SYSKEY="$(openssl rand -hex 32)"
+ADMIN_PASS="$(openssl rand -base64 24 | tr -d '\n')"
+
+mysql -urpay -p -h127.0.0.1 rpay <<SQL
+INSERT INTO pay_config (k, v) VALUES
+  ('syskey', '${SYSKEY}'),
+  ('admin_user', 'admin'),
+  ('admin_pwd', '${ADMIN_PASS}')
+ON DUPLICATE KEY UPDATE v=VALUES(v);
+SQL
+
+printf '首次管理员账号：admin\n首次管理员密码：%s\n' "$ADMIN_PASS"
+```
+
+保存首次密码到安全的密码管理器，登录 `/admin` 后立即修改。`syskey` 用于签名 Session Cookie，部署后不得随意改变，否则现有登录会话全部失效。
+
+以下旧配置示例仅用于解释字段，通常无需手动执行：
 
 ```sql
--- 管理员凭据（密码请改为强密码）
-INSERT INTO pay_config (k, v) VALUES ('admin_user', 'admin')
-ON DUPLICATE KEY UPDATE v = VALUES(v);
-INSERT INTO pay_config (k, v) VALUES ('admin_pwd', '123456')
-ON DUPLICATE KEY UPDATE v = VALUES(v);
-INSERT INTO pay_config (k, v) VALUES ('admin_paypwd', '123456')
-ON DUPLICATE KEY UPDATE v = VALUES(v);
 
 -- 站点基本信息
 INSERT INTO pay_config (k, v) VALUES ('sitename', '聚合支付平台')
@@ -701,20 +720,7 @@ ON DUPLICATE KEY UPDATE name=VALUES(name), showname=VALUES(showname), status=VAL
 
 #### 插入支付插件（pay_plugin）
 
-rpay 内置支持以下插件（`code` 列对应 `pay_channel.plugin` 字段）。仅插入你实际使用的插件即可：
-
-```sql
--- rpay 内置实现的插件（代码中有对应模块）
-INSERT INTO pay_plugin (code, name, shortname, url, types, localtypes) VALUES
-  ('alipay',  '支付宝官方',     '支付宝', 'https://open.alipay.com/',     'alipay',                 'alipay'),
-  ('wxpay',   '微信支付V2',     '微信',   'https://pay.weixin.qq.com/',   'wxpay',                  'wxpay'),
-  ('wxpayn',  '微信支付V3',     '微信',   'https://pay.weixin.qq.com/',   'wxpay',                  'wxpay'),
-  ('paypal',  'PayPal',         'PayPal', 'https://www.paypal.com/',       'paypal',                 'paypal'),
-  ('stripe',  'Stripe',         'Stripe', 'https://stripe.com/',           'stripe',                 'stripe')
-ON DUPLICATE KEY UPDATE name=VALUES(name);
-```
-
-> **注意**：`localtypes` 列为 `NULL` 的插件表示该插件由上游聚合支付平台处理，rpay 不直接对接。`localtypes` 不为 `NULL` 的插件（如 `alipay`、`wxpay`、`wxpayn`）由 rpay 直接调用官方 API。
+`database/seed.sql` 已使用实际表结构的 `name/showname/author/link/types/transtypes` 字段插入 rpay 支持的插件元数据，无需再次手工插入。运行时实际分发依据是 `pay_channel.plugin`。
 
 #### 插入示例商户（pay_user）
 
@@ -801,12 +807,13 @@ ON DUPLICATE KEY UPDATE name=VALUES(name);
 ```
 
 > **字段说明**：
-> - `type`：关联 `pay_type.id`（1=支付宝, 2=微信, 3=PayPal, 4=Stripe）
-> - **必须与 pay_type.id 一致**，否则提交订单报"当前支付方式暂不可用"
-> - `plugin`：关联 `pay_plugin.code`，决定用哪个支付模块
-> - `status`：1=启用, 0=禁用
-> - `config`：JSON 格式的渠道配置，不同插件字段不同
-> - `rate`：手续费率（百分比，100.00=无手续费）
+> - `type`：关联 `pay_type.id`（1=支付宝, 2=微信, 3=PayPal, 4=Stripe）；
+> - `plugin`：rpay 运行时分发名，例如 `alipay`、`wxpay`、`wxpayn`、`paypal`、`stripe`；
+> - `status`：1=启用，0=禁用；先确认密钥和回调可用，再逐个启用；
+> - `config`：JSON 格式的渠道配置，不同插件字段不同；
+> - `rate`：手续费率（百分比，100.00=无手续费）。
+>
+> 全新安装优先使用 `database/seed.sql` 提供的五个默认关闭模板，并通过 `/admin/channels` 编辑渠道，避免重复执行本节旧 SQL 示例。
 
 #### 导入后设置管理员凭据
 
@@ -875,20 +882,9 @@ chmod 700 $INSTALL_DIR/secrets
 > swapon /swapfile
 > ```
 
-### 3.6 配置文件
+### 3.6 运行参数和数据库连接
 
-> 仓库中提供了示例文件：`config/config.example.toml` 和 `secrets/database-url.example`，可直接复制后修改。
-
-#### config.toml
-
-```bash
-cat > /opt/services/rpay/config/config.toml <<'EOF'
-listen = "127.0.0.1:16889"
-public_base_url = "https://你的域名"
-environment = "production"
-table_prefix = "pay"
-EOF
-```
+当前程序不读取 `config/config.toml`；监听地址、外部域名和数据库 URL 文件必须通过 systemd 的 `ExecStart` 参数或 `RPAY_*` 环境变量提供。仓库中的 TOML 示例仅供记录，不是有效运行配置。
 
 #### secrets/database-url
 
@@ -947,7 +943,7 @@ systemctl daemon-reload
 systemctl enable rpay.service
 ```
 
-> **注意**：`ExecStart` 中的 `--public-base-url` 要替换为你的实际域名。也可以去掉这个参数，改为在 `config.toml` 中配置（程序会自动读取）。
+> **注意**：`ExecStart` 中的 `--public-base-url` 必须替换为实际 HTTPS 域名。程序当前不会自动读取 `config.toml`；如不使用命令行参数，请改用 `RPAY_PUBLIC_BASE_URL`、`RPAY_LISTEN` 和 `RPAY_DATABASE_URL_FILE` 环境变量。
 
 ### 3.8 配置反向代理
 
