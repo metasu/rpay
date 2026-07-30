@@ -53,6 +53,19 @@ async fn health() -> &'static str {
     "ok"
 }
 
+fn deserialize_boolish<'de, D>(deserializer: D) -> Result<bool, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de::Error;
+    let value = <String as serde::Deserialize>::deserialize(deserializer)?;
+    match value.as_str() {
+        "1" | "true" | "yes" | "on" => Ok(true),
+        "0" | "false" | "no" | "off" | "" => Ok(false),
+        _ => Err(D::Error::custom("expected a boolean or 1/0")),
+    }
+}
+
 fn parse_unique_params(bytes: &[u8]) -> Result<BTreeMap<String, String>, &'static str> {
     if bytes.len() > 16 * 1024 {
         return Err("request too large");
@@ -367,7 +380,7 @@ async fn pay_paypal(state: &AppState, channel: &ChannelFullRow, trade_no: &str, 
         return text_response(StatusCode::SERVICE_UNAVAILABLE, "支付渠道配置错误");
     };
     let return_url = format!("{}/return/paypal?trade_no={trade_no}", state.public_base_url);
-    let cancel_url = format!("{}/return/paypal?trade_no={trade_no}&cancelled=1", state.public_base_url);
+    let cancel_url = format!("{}/return/paypal?trade_no={trade_no}&cancelled=true", state.public_base_url);
     match paypal::create_order(&cfg, trade_no, fen, name, &return_url, &cancel_url).await {
         Ok(order) => Redirect::to(&order.approve_url).into_response(),
         Err(_) => text_response(StatusCode::INTERNAL_SERVER_ERROR, "PayPal 下单失败"),
@@ -382,7 +395,7 @@ async fn pay_stripe(state: &AppState, channel: &ChannelFullRow, trade_no: &str, 
         "{}/return/stripe?trade_no={trade_no}&session_id={{CHECKOUT_SESSION_ID}}",
         state.public_base_url
     );
-    let cancel_url = format!("{}/return/stripe?trade_no={trade_no}&cancelled=1", state.public_base_url);
+    let cancel_url = format!("{}/return/stripe?trade_no={trade_no}&cancelled=true", state.public_base_url);
     match stripe::create_checkout_session(&cfg, trade_no, fen, name, &success_url, &cancel_url).await {
         Ok(session) => Redirect::to(&session.url).into_response(),
         Err(_) => text_response(StatusCode::INTERNAL_SERVER_ERROR, "Stripe 下单失败"),
@@ -765,7 +778,7 @@ fn wxpay_v3_ack(success: bool) -> Response {
 #[derive(serde::Deserialize)]
 struct PaypalReturnQuery {
     trade_no: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_boolish")]
     cancelled: bool,
 }
 
@@ -860,7 +873,7 @@ async fn paypal_notify(State(state): State<AppState>, headers: HeaderMap, body: 
 struct StripeReturnQuery {
     trade_no: String,
     session_id: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_boolish")]
     cancelled: bool,
 }
 
@@ -935,4 +948,25 @@ async fn stripe_notify(State(state): State<AppState>, headers: HeaderMap, body: 
         }
     }
     StatusCode::OK.into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn return_queries_accept_legacy_and_canonical_cancel_values() {
+        let legacy: StripeReturnQuery = serde_json::from_value(
+            serde_json::json!({"trade_no":"T1","cancelled":"1"}),
+        ).unwrap();
+        let canonical: StripeReturnQuery = serde_json::from_value(
+            serde_json::json!({"trade_no":"T1","cancelled":"true"}),
+        ).unwrap();
+        let not_cancelled: PaypalReturnQuery = serde_json::from_value(
+            serde_json::json!({"trade_no":"T1","cancelled":"0"}),
+        ).unwrap();
+        assert!(legacy.cancelled);
+        assert!(canonical.cancelled);
+        assert!(!not_cancelled.cancelled);
+    }
 }

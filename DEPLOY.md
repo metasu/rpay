@@ -1273,14 +1273,19 @@ Webhook 是服务器到服务器的异步通知，不依赖用户浏览器跳转
 
 > **多个网关共用 Stripe 账户**：Stripe 支持添加多个 Webhook endpoint，每个有独立的 signing secret。但 rpay 的 `config.appkey` 只能填一个，所以每个网关用各自 Webhook 的 signing secret。
 
-### 8.3 货币配置
+### 8.3 支付方式与货币配置
 
-rpay 收单金额为人民币（分），Stripe 渠道通过 `currency` 和 `currency_rate` 转换：
+Stripe 渠道默认向 Checkout 请求信用卡和支付宝，可通过 `payment_method_types` 显式调整：
 
 | 字段 | 说明 | 示例 |
 |------|------|------|
+| `payment_method_types` | Checkout 支付方式；省略时默认信用卡和支付宝 | `["card","alipay"]`；仅信用卡用 `["card"]` |
 | `currency` | Stripe 收款货币 | `eur`（欧元）、`gbp`（英镑）、`usd`（美元） |
 | `currency_rate` | CNY→目标货币汇率 | 7.8（¥7.8≈€1）、9.1（¥9.1≈£1）、7.2（¥7.2≈$1） |
+
+支付宝还需要在 Stripe Dashboard 的 **Settings → Payment methods** 中为对应的 Test/Live 模式启用。是否最终展示由 Stripe 根据账户注册地区、账户能力、Dashboard 设置、交易币种和客户位置共同决定，并非仅由网关服务器或客户 IP 决定。如果账户不支持支付宝且创建 Session 报错，可暂时配置为 `["card"]`。
+
+rpay 收单金额为人民币（分），Stripe 渠道通过 `currency` 和 `currency_rate` 转换：
 
 > **避免双重货币转换费**：将 `currency` 设为商户 Stripe 账户的结算货币。例如欧洲账户设 `eur`，英国账户设 `gbp`。如果设为 `usd` 而商户账户是 EUR/GBP，Stripe 会额外收货币转换费。
 
@@ -1294,9 +1299,9 @@ rpay 收单金额为人民币（分），Stripe 渠道通过 `currency` 和 `cur
 ### 8.4 写入数据库
 
 ```sql
--- 实盘配置
-UPDATE pay_channel SET 
-  config = '{"appsecret":"sk_live_你的SecretKey","appkey":"whsec_你的SigningSecret","currency":"eur","currency_rate":7.8}',
+-- 实盘配置：信用卡 + 支付宝
+UPDATE pay_channel SET
+  config = '{"appsecret":"sk_live_你的SecretKey","appkey":"whsec_你的SigningSecret","currency":"eur","currency_rate":7.8,"payment_method_types":["card","alipay"]}',
   status = 1
 WHERE plugin = 'stripe';
 
@@ -1311,9 +1316,10 @@ UPDATE pay_type SET status = 1 WHERE name = 'stripe';
 #### 沙箱测试
 
 1. 在 Stripe Dashboard 切换到 **Test Mode**
-2. 使用 Test Mode 的 Secret Key（`sk_test_...`）配置渠道
-3. 通过 `/submit.php` POST 提交 Stripe 订单，跳转到 Stripe Checkout 页面
-4. 使用 [Stripe 测试卡号](https://docs.stripe.com/testing) 完成支付：
+2. 在 Test Mode 的 Payment methods 中启用支付宝
+3. 使用 Test Mode 的 Secret Key（`sk_test_...`）配置渠道
+4. 通过 `/submit.php` POST 提交 Stripe 订单，确认 Checkout 展示已启用且适用于当前交易的支付方式
+5. 使用 [Stripe 测试卡号](https://docs.stripe.com/testing) 完成支付：
    - `4242 4242 4242 4242`（Visa，成功）
    - `4000 0027 6000 3184`（Visa，触发 3DS 验证）
    - 任意未来日期 + 任意 CVC + 任意邮编
@@ -1330,7 +1336,7 @@ UPDATE pay_type SET status = 1 WHERE name = 'stripe';
 用户 → rpay /submit.php (POST, type=stripe)
      → rpay 调用 Stripe API: POST /v1/checkout/sessions
      → 返回 checkout session URL，303 重定向用户到 Stripe Checkout 页面
-     → 用户在 Stripe 完成信用卡支付
+     → 用户使用 Stripe 为本次交易展示的信用卡或支付宝完成支付
      → Stripe 重定向用户到 rpay /return/stripe?trade_no=xxx&session_id=xxx
      → rpay 调用 Stripe API: GET /v1/checkout/sessions/{id} 确认支付状态
      → 标记订单已付，重定向到商户 return_url

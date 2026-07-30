@@ -18,6 +18,9 @@ pub struct StripeConfig {
     /// CNY->USD rate. Matches legacy `channel['currency_rate']` semantics.
     #[serde(default = "default_rate")]
     pub currency_rate: f64,
+    /// Checkout methods, additionally filtered by Stripe account capabilities.
+    #[serde(default = "default_payment_method_types")]
+    pub payment_method_types: Vec<String>,
 }
 
 fn default_currency() -> String {
@@ -25,6 +28,9 @@ fn default_currency() -> String {
 }
 fn default_rate() -> f64 {
     1.0
+}
+fn default_payment_method_types() -> Vec<String> {
+    vec!["card".to_string(), "alipay".to_string()]
 }
 
 impl StripeConfig {
@@ -61,18 +67,20 @@ pub async fn create_checkout_session(
     cancel_url: &str,
 ) -> Result<CheckoutSession, StripeError> {
     let amount = cfg.convert_fen_to_smallest_unit(total_fee_fen);
-    let params: Vec<(&str, String)> = vec![
-        ("mode", "payment".to_string()),
-        ("payment_method_types[0]", "card".to_string()),
-        ("line_items[0][price_data][currency]", cfg.currency.clone()),
-        ("line_items[0][price_data][product_data][name]", description.to_string()),
-        ("line_items[0][price_data][unit_amount]", amount.to_string()),
-        ("line_items[0][quantity]", "1".to_string()),
-        ("client_reference_id", out_trade_no.to_string()),
-        ("metadata[out_trade_no]", out_trade_no.to_string()),
-        ("success_url", success_url.to_string()),
-        ("cancel_url", cancel_url.to_string()),
+    let mut params: Vec<(String, String)> = vec![
+        ("mode".to_string(), "payment".to_string()),
+        ("line_items[0][price_data][currency]".to_string(), cfg.currency.clone()),
+        ("line_items[0][price_data][product_data][name]".to_string(), description.to_string()),
+        ("line_items[0][price_data][unit_amount]".to_string(), amount.to_string()),
+        ("line_items[0][quantity]".to_string(), "1".to_string()),
+        ("client_reference_id".to_string(), out_trade_no.to_string()),
+        ("metadata[out_trade_no]".to_string(), out_trade_no.to_string()),
+        ("success_url".to_string(), success_url.to_string()),
+        ("cancel_url".to_string(), cancel_url.to_string()),
     ];
+    for (index, method) in cfg.payment_method_types.iter().enumerate() {
+        params.push((format!("payment_method_types[{index}]"), method.clone()));
+    }
     let client = reqwest::Client::new();
     let resp = client
         .post(format!("{API_BASE}/checkout/sessions"))
@@ -148,9 +156,24 @@ mod tests {
             appkey: None,
             currency: "usd".into(),
             currency_rate: 7.2,
+            payment_method_types: default_payment_method_types(),
         };
         // 720 CNY fen (7.20 CNY) at rate 7.2 -> 100 cents ($1.00)
         assert_eq!(cfg.convert_fen_to_smallest_unit(720), 100);
+    }
+
+    #[test]
+    fn payment_methods_default_to_card_and_alipay() {
+        let cfg: StripeConfig = serde_json::from_str(r#"{"appsecret":"sk_test"}"#).unwrap();
+        assert_eq!(cfg.payment_method_types, vec!["card", "alipay"]);
+    }
+
+    #[test]
+    fn payment_methods_can_be_limited_to_card() {
+        let cfg: StripeConfig = serde_json::from_str(
+            r#"{"appsecret":"sk_test","payment_method_types":["card"]}"#,
+        ).unwrap();
+        assert_eq!(cfg.payment_method_types, vec!["card"]);
     }
 
     #[test]
@@ -160,6 +183,7 @@ mod tests {
             appkey: Some("whsec_testsecret".into()),
             currency: "usd".into(),
             currency_rate: 1.0,
+            payment_method_types: default_payment_method_types(),
         };
         let body = r#"{"id":"evt_1"}"#;
         let timestamp = "1614556800";
