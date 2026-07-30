@@ -35,7 +35,6 @@ pub fn app(state: AppState) -> Router {
         .route("/submit.php", post(submit).get(submit))
         .route("/notify/alipay", post(alipay_notify))
         .route("/return/alipay", get(alipay_return))
-        .route("/return/alipay-wait", get(alipay_wait))
         .route("/wappay/alipay/{trade_no}", get(alipay_wappay))
         .route("/notify/wxpay", post(wxpay_v2_notify))
         .route("/notify/wxpayv3", post(wxpay_v3_notify))
@@ -500,14 +499,6 @@ async fn alipay_return(
 
     Redirect::to(&build_callback_url(&order.return_url, &state, &order.trade_no).await)
         .into_response()
-}
-
-async fn alipay_wait(State(state): State<AppState>, Query(q): Query<ReturnQuery>) -> Response {
-    let Ok(order) = state.store.order_by_trade_no(&q.trade_no).await else {
-        return (StatusCode::NOT_FOUND, "order not found").into_response();
-    };
-    let callback_url = build_callback_url(&order.return_url, &state, &order.trade_no).await;
-    Html(templates::waiting_page(&order.trade_no, &callback_url)).into_response()
 }
 
 async fn build_callback_url(base_url: &str, state: &AppState, trade_no: &str) -> String {
