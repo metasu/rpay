@@ -1128,11 +1128,52 @@ Rust release 编译内存消耗大，512MB VPS 会 OOM。解决办法：添加 2
 - `/opt/services/rpay/`（部署目录）— 运行时需要的二进制、配置、密钥
 - 迁移到新 VPS 时，两者都需要，或者在新 VPS 上只放二进制 + 配置，源码可以之后从 git 克隆
 
-### 11. 必须导入完整数据库 dump
-仅手动创建 `pay_config`/`pay_user`/`pay_order`/`pay_channel` 4 张表是不够的。`pay_type` 表缺失会导致 `/admin/channels` 页面 500 错误（`list_channels_full()` SQL 中 `LEFT JOIN pay_type B ON A.type=B.id`）。必须从旧服务器导入完整的 29 张表 dump。
+### 11. 必须导入完整数据库结构
+仅手动创建 `pay_config`/`pay_user`/`pay_order`/`pay_channel` 4 张表是不够的。`pay_type` 表缺失会导致 `/admin/channels` 页面 500 错误（`list_channels_full()` SQL 中 `LEFT JOIN pay_type B ON A.type=B.id`）。全新部署直接导入仓库的 `database/schema.sql` 和 `database/seed.sql`；迁移旧实例时才导入旧服务器的完整 29 表 dump。
 
 ### 12. 管理员凭据在数据库中，不在 secrets 文件
-rpay 的管理员登录从 `pay_config` 表读取 `admin_user` 和 `admin_pwd`，不是从 `secrets/admin-password` 文件。导入 dump 后需手动 INSERT 这两个键。修改密码也是更新数据库，不是改文件。
+rpay 的管理员登录从 `pay_config` 表读取 `admin_user` 和 `admin_pwd`，不是从 `secrets/admin-password` 文件。全新部署时按 3.3 节生成随机 `syskey` 和管理员密码；修改密码也是更新数据库，不是改文件。
+
+### 13. WordPress 桌面端 rpay 重复下单
+
+**现象**：手机端点击一次支付正常创建一笔订单；电脑端点击一次，约两秒后可能出现两笔不同的 WordPress 未支付订单，并进一步在 rpay 产生两笔订单。
+
+**根因**：根因在 WordPress 的 erphpdown 插件桌面端弹窗/iframe 链路，而不是 rpay 回调。桌面端可能对同一个 `.erphpdown-iframe` 支付链接重复绑定或触发点击处理器，进而使 `payment/rpay.php` 被加载两次。该入口每次调用 `_epd_create_page_order('rpay')` 都会生成新的 WordPress 商户订单号，因此网关无法把两个不同的 `out_trade_no` 判断为同一笔。
+
+**修复职责分层**：
+
+1. **WordPress 主修复**（必须部署）：
+   - 文件：`wp-content/plugins/erphpdown/static/erphpdown.js`。
+   - 对 `.erphpdown-iframe` 使用命名空间事件，先 `off()` 再 `on()`，并在点击后调用 `preventDefault()` 和 `stopImmediatePropagation()`，保证一次点击仅打开一个支付 iframe。
+   - 文件：`wp-content/plugins/erphpdown/includes/pay.erphp.php`。
+   - 仅在 `$payment == 'rpay'` 时，根据会话、商品/会员类型、金额、数量、客户数据和支付方式计算支付意图；30 秒内相同请求复用第一笔未支付的 WordPress 订单，不重复插入 `icemoney`。
+2. **rpay 第二层保护**（已内置）：`src/web.rs` 按 `(merchant uid, out_trade_no)` 查找既有订单；相同商户订单号重复提交会复用已有网关订单。该保护无法替代 WordPress 修复，因为原问题会生成两个不同的 `out_trade_no`。
+
+**验证步骤**：
+
+1. 清理 WordPress 页面/对象缓存与 PHP OPcache，确保插件新文件生效。
+2. 使用电脑浏览器登录同一用户，打开开发者工具的 Network 面板。
+3. 只点击一次 rpay 充值或购买按钮。
+4. 确认 WordPress 的 `icemoney` 后台只新增一笔未支付订单；rpay `/admin/orders` 也只新增一笔订单。
+5. 再用手机端执行相同测试，确认仍为一次点击一笔订单。
+
+> 30 秒窗口仅用于折叠同一次桌面端重复加载；超过窗口后的用户主动重新发起支付会正常创建新订单。
+
+### 14. WordPress 全站页面前缀出现“4选项”
+
+**现象**：站点所有页面在 `<!DOCTYPE HTML>` 前出现 `4选项` 等无关文字。
+
+**根因**：`wp-content/plugins/erphpdown/includes/pay.erphp.php` 的 PHP 开始标签前存在裸文本。该文件会在插件初始化阶段加载，PHP 会将开标签前的任何字符直接写入每个 HTTP 响应，因此影响全站，而非特定主题模板。
+
+**修复**：删除 PHP 开始标签前的所有裸文本，确保文件首字节就是 `<?php`。同时检查 `wp-content/plugins/erphpdown/static/erphpdown.js` 的首字节，不应在 `/*! Layer ... */` 前出现额外字符，否则可能导致支付前端脚本异常。
+
+**验证**：清理缓存后执行：
+
+```bash
+curl -sS -L https://你的WordPress域名/ | head -c 32
+```
+
+输出应直接以 `<!DOCTYPE HTML>` 或 `<!doctype html>` 开始，不应含有 `4选项`。本问题未修改 modown 或 monster8 的主题模板。
 
 ---
 
