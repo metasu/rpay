@@ -1245,3 +1245,102 @@ PayPal 支持无 PayPal 账户的访客直接用信用卡（Visa/Mastercard 等�
 | 4 | stripe | stripe | Stripe |
 
 > **注意**：`pay_type.status` 也必须为 `1`（启用），否则该支付方式不可用。
+
+---
+
+## 八、Stripe 对接配置
+
+### 8.1 获取 API 密钥
+
+1. 登录 [Stripe Dashboard](https://dashboard.stripe.com/apikeys)
+2. 获取以下两个密钥：
+   - **Secret Key**（`sk_live_...`）→ 填入 `pay_channel.config.appsecret`
+   - **Publishable Key**（`pk_live_...`）→ 公钥，rpay 不直接使用，记录备用
+
+> 沙箱测试用 **Test Mode** 的密钥（`sk_test_...`），实盘用 **Live Mode** 的密钥（`sk_live_...`）。
+
+### 8.2 配置 Webhook
+
+Webhook 是服务器到服务器的异步通知，不依赖用户浏览器跳转，是订单确认的可靠兜底机制。
+
+1. 访问 [Stripe Webhooks](https://dashboard.stripe.com/webhooks) → **Add endpoint**
+2. Endpoint URL: `https://你的域名/notify/stripe`
+3. 勾选事件：
+   - **`checkout.session.completed`** — 收款成功（必须）
+   - **`charge.refunded`** — 退款成功（可选，当前 rpay 不处理退款回调）
+4. 保存后获取 **Signing Secret**（`whsec_...`）→ 填入 `pay_channel.config.appkey`
+
+> **多个网关共用 Stripe 账户**：Stripe 支持添加多个 Webhook endpoint，每个有独立的 signing secret。但 rpay 的 `config.appkey` 只能填一个，所以每个网关用各自 Webhook 的 signing secret。
+
+### 8.3 货币配置
+
+rpay 收单金额为人民币（分），Stripe 渠道通过 `currency` 和 `currency_rate` 转换：
+
+| 字段 | 说明 | 示例 |
+|------|------|------|
+| `currency` | Stripe 收款货币 | `eur`（欧元）、`gbp`（英镑）、`usd`（美元） |
+| `currency_rate` | CNY→目标货币汇率 | 7.8（¥7.8≈€1）、9.1（¥9.1≈£1）、7.2（¥7.2≈$1） |
+
+> **避免双重货币转换费**：将 `currency` 设为商户 Stripe 账户的结算货币。例如欧洲账户设 `eur`，英国账户设 `gbp`。如果设为 `usd` 而商户账户是 EUR/GBP，Stripe 会额外收货币转换费。
+
+> **最小金额限制**：Stripe 对不同货币有最小收款额：
+> - EUR: €0.50（对应人民币至少 ¥3.90，按 rate=7.8）
+> - GBP: £0.30（对应人民币至少 ¥2.73，按 rate=9.1）
+> - USD: $0.50（对应人民币至少 ¥3.60，按 rate=7.2）
+>
+> 低于最小金额 Stripe 会返回 `amount_too_small` 错误，导致下单失败。
+
+### 8.4 写入数据库
+
+```sql
+-- 实盘配置
+UPDATE pay_channel SET 
+  config = '{"appsecret":"sk_live_你的SecretKey","appkey":"whsec_你的SigningSecret","currency":"eur","currency_rate":7.8}',
+  status = 1
+WHERE plugin = 'stripe';
+
+-- 同时确保 pay_type 中 stripe 已启用
+UPDATE pay_type SET status = 1 WHERE name = 'stripe';
+```
+
+修改后重启服务：`systemctl restart rpay.service`
+
+### 8.5 测试
+
+#### 沙箱测试
+
+1. 在 Stripe Dashboard 切换到 **Test Mode**
+2. 使用 Test Mode 的 Secret Key（`sk_test_...`）配置渠道
+3. 通过 `/submit.php` POST 提交 Stripe 订单，跳转到 Stripe Checkout 页面
+4. 使用 [Stripe 测试卡号](https://docs.stripe.com/testing) 完成支付：
+   - `4242 4242 4242 4242`（Visa，成功）
+   - `4000 0027 6000 3184`（Visa，触发 3DS 验证）
+   - 任意未来日期 + 任意 CVC + 任意邮编
+
+#### 实盘测试
+
+使用 Live Mode 的 Secret Key 配置渠道，用真实信用卡支付最小金额。
+
+> **注意**：实盘测试会真实扣款。建议金额 ¥5（按汇率约 €0.64），低于 €0.50 会下单失败。
+
+### 8.6 支付流程
+
+```
+用户 → rpay /submit.php (POST, type=stripe)
+     → rpay 调用 Stripe API: POST /v1/checkout/sessions
+     → 返回 checkout session URL，303 重定向用户到 Stripe Checkout 页面
+     → 用户在 Stripe 完成信用卡支付
+     → Stripe 重定向用户到 rpay /return/stripe?trade_no=xxx&session_id=xxx
+     → rpay 调用 Stripe API: GET /v1/checkout/sessions/{id} 确认支付状态
+     → 标记订单已付，重定向到商户 return_url
+     →（异步）Stripe 发送 Webhook 到 rpay /notify/stripe（兜底）
+```
+
+### 8.7 config 字段说明
+
+| 字段 | 说明 | 示例 |
+|------|------|------|
+| `appsecret` | Stripe Secret Key | `sk_live_...` / `sk_test_...` |
+| `appkey` | Stripe Webhook Signing Secret | `whsec_...` |
+| `currency` | 收款货币（小写） | `eur` / `gbp` / `usd` |
+| `currency_rate` | CNY→目标货币汇率 | 7.8 |
