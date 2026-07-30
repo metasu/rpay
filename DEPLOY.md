@@ -694,9 +694,9 @@ ON DUPLICATE KEY UPDATE v = VALUES(v);
 INSERT INTO pay_type (id, name, device, showname, status) VALUES
   (1, 'alipay', 0, '支付宝', 1),
   (2, 'wxpay',  0, '微信支付', 1),
-  (3, 'paypal', 0, 'PayPal', 0),
-  (4, 'stripe', 0, 'Stripe', 0)
-ON DUPLICATE KEY UPDATE name=VALUES(name), showname=VALUES(showname);
+  (3, 'paypal', 0, 'PayPal', 1),
+  (4, 'stripe', 0, 'Stripe', 1)
+ON DUPLICATE KEY UPDATE name=VALUES(name), showname=VALUES(showname), status=VALUES(status);
 ```
 
 #### 插入支付插件（pay_plugin）
@@ -709,8 +709,8 @@ INSERT INTO pay_plugin (code, name, shortname, url, types, localtypes) VALUES
   ('alipay',  '支付宝官方',     '支付宝', 'https://open.alipay.com/',     'alipay',                 'alipay'),
   ('wxpay',   '微信支付V2',     '微信',   'https://pay.weixin.qq.com/',   'wxpay',                  'wxpay'),
   ('wxpayn',  '微信支付V3',     '微信',   'https://pay.weixin.qq.com/',   'wxpay',                  'wxpay'),
-  ('paypal',  'PayPal',         'PayPal', 'https://www.paypal.com/',       'paypal',                 NULL),
-  ('stripe',  'Stripe',         'Stripe', 'https://stripe.com/',           'alipay,wxpay,paypal', NULL)
+  ('paypal',  'PayPal',         'PayPal', 'https://www.paypal.com/',       'paypal',                 'paypal'),
+  ('stripe',  'Stripe',         'Stripe', 'https://stripe.com/',           'stripe',                 'stripe')
 ON DUPLICATE KEY UPDATE name=VALUES(name);
 ```
 
@@ -771,19 +771,19 @@ VALUES (2, 0, 1, 'alipay', '支付宝', 100.00, 1, '2', 0, 0, '', '', NULL, NULL
   0)
 ON DUPLICATE KEY UPDATE name=VALUES(name);
 
--- Stripe（type=4, plugin=stripe）
+-- Stripe（type=4 对应 pay_type.id=4, plugin=stripe）
 INSERT INTO pay_channel (id, mode, type, plugin, name, rate, status, apptype, daytop, daystatus, paymin, paymax, appwxmp, appwxa, costrate, config, daymaxorder)
-VALUES (3, 0, 4, 'stripe', 'Stripe', 100.00, 0, NULL, 0, 0, '', '', NULL, NULL, 0.00,
-  '{"appsecret":"","appkey":"","currency":"eur","currency_rate":7.8}',
+VALUES (3, 0, 4, 'stripe', 'Stripe', 100.00, 1, NULL, 0, 0, '', '', NULL, NULL, 0.00,
+  '{"appsecret":"sk_live_填入你的SecretKey","appkey":"whsec_填入WebhookSigningSecret","currency":"eur","currency_rate":7.8}',
   0)
-ON DUPLICATE KEY UPDATE name=VALUES(name);
+ON DUPLICATE KEY UPDATE name=VALUES(name), status=VALUES(status);
 
--- PayPal（type=6, plugin=paypal）
+-- PayPal（type=3 对应 pay_type.id=3, plugin=paypal）
 INSERT INTO pay_channel (id, mode, type, plugin, name, rate, status, apptype, daytop, daystatus, paymin, paymax, appwxmp, appwxa, costrate, config, daymaxorder)
-VALUES (4, 0, 6, 'paypal', 'PayPal', 100.00, 0, NULL, 0, 0, '', '', NULL, NULL, 0.00,
-  '{"appid":"","appsecret":"","sandbox":true,"currency":"GBP","currency_rate":9.1,"webhook_id":""}',
+VALUES (4, 0, 3, 'paypal', 'PayPal', 100.00, 1, NULL, 0, 0, '', '', NULL, NULL, 0.00,
+  '{"appid":"填入PayPalClientID","appsecret":"填入PayPalSecret","sandbox":false,"currency":"GBP","currency_rate":9.1,"webhook_id":"填入WebhookID"}',
   0)
-ON DUPLICATE KEY UPDATE name=VALUES(name);
+ON DUPLICATE KEY UPDATE name=VALUES(name), status=VALUES(status);
 
 -- 微信支付V2（type=2, plugin=wxpay）
 INSERT INTO pay_channel (id, mode, type, plugin, name, rate, status, apptype, daytop, daystatus, paymin, paymax, appwxmp, appwxa, costrate, config, daymaxorder)
@@ -802,6 +802,7 @@ ON DUPLICATE KEY UPDATE name=VALUES(name);
 
 > **字段说明**：
 > - `type`：关联 `pay_type.id`（1=支付宝, 2=微信, 3=PayPal, 4=Stripe）
+> - **必须与 pay_type.id 一致**，否则提交订单报"当前支付方式暂不可用"
 > - `plugin`：关联 `pay_plugin.code`，决定用哪个支付模块
 > - `status`：1=启用, 0=禁用
 > - `config`：JSON 格式的渠道配置，不同插件字段不同
