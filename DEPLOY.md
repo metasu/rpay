@@ -1136,3 +1136,112 @@ Rust release 编译内存消耗大，512MB VPS 会 OOM。解决办法：添加 2
 
 ### 12. 管理员凭据在数据库中，不在 secrets 文件
 rpay 的管理员登录从 `pay_config` 表读取 `admin_user` 和 `admin_pwd`，不是从 `secrets/admin-password` 文件。导入 dump 后需手动 INSERT 这两个键。修改密码也是更新数据库，不是改文件。
+
+---
+
+## 七、PayPal 对接配置
+
+### 7.1 创建 PayPal 应用
+
+1. 访问 [PayPal Developer Dashboard](https://developer.paypal.com/dashboard/applications)
+2. **My Apps & Credentials** → 选择 **Live**（实盘）或 **Sandbox**（沙箱）
+3. **Create App**，填写应用名称
+4. 创建后获取：
+   - **Client ID** → 填入 `pay_channel.config.appid`
+   - **Client Secret** → 填入 `pay_channel.config.appsecret`
+
+### 7.2 配置 Webhook
+
+Webhook 是服务器到服务器的异步通知，不依赖用户浏览器跳转，是订单确认的可靠兜底机制。
+
+1. 在 PayPal App 页面 → **Webhooks** → **Add Webhook**
+2. Webhook URL: `https://你的域名/notify/paypal`
+3. 勾选事件：
+   - **Payment capture completed** — 收款成功（必须）
+   - **Payment capture refunded** — 退款成功（可选，当前 rpay 不处理退款回调）
+   - 其他事件（declined/denied/pending/reversed）可选，rpay 会忽略不处理的事件
+4. 保存后获取 **Webhook ID** → 填入 `pay_channel.config.webhook_id`
+
+> **沙箱 Webhook**：在 Developer Dashboard 的 Sandbox 标签页配置，URL 同样是 `https://你的域名/notify/paypal`
+>
+> **实盘 Webhook**：也可通过 `https://www.paypal.com/businessmanage/notifications/webhooks` 配置
+
+### 7.3 货币配置
+
+rpay 收单金额为人民币（分），PayPal 渠道通过 `currency` 和 `currency_rate` 转换：
+
+| 字段 | 说明 | 示例 |
+|------|------|------|
+| `currency` | PayPal 收款货币 | `GBP`（英镑）、`EUR`（欧元）、`USD`（美元） |
+| `currency_rate` | CNY→目标货币汇率 | 9.1（¥9.1≈£1）、7.8（¥7.8≈€1）、7.2（¥7.2≈$1） |
+
+> **避免双重货币转换费**：将 `currency` 设为商户 PayPal 账户的结算货币，这样 PayPal 不会二次转换。例如英国账户设 `GBP`，欧洲账户设 `EUR`。如果设为 `USD` 而商户账户是 GBP/EUR，PayPal 会收约 4% 货币转换费。
+
+### 7.4 写入数据库
+
+```sql
+-- 沙箱配置（测试用）
+UPDATE pay_channel SET 
+  config = '{"appid":"沙箱ClientID","appsecret":"沙箱Secret","sandbox":true,"currency":"GBP","currency_rate":9.1,"webhook_id":"沙箱WebhookID"}',
+  status = 1
+WHERE plugin = 'paypal';
+
+-- 实盘配置
+UPDATE pay_channel SET 
+  config = '{"appid":"实盘ClientID","appsecret":"实盘Secret","sandbox":false,"currency":"GBP","currency_rate":9.1,"webhook_id":"实盘WebhookID"}',
+  status = 1
+WHERE plugin = 'paypal';
+```
+
+修改后重启服务：`systemctl restart rpay.service`
+
+### 7.5 Guest Checkout（访客支付）
+
+PayPal 支持无 PayPal 账户的访客直接用信用卡（Visa/Mastercard 等）支付：
+
+1. 登录 [PayPal Business Account](https://www.paypal.com/businessmanage)
+2. **Account Settings** → **Website Payments** → **Website Preferences**
+3. 开启 **"Account Optional"**（允许访客支付）
+
+> 开启后，PayPal 支付页面会显示 "Pay with Debit or Credit Card" 选项，用户无需注册 PayPal 即可用卡支付。
+
+### 7.6 测试
+
+#### 沙箱测试
+
+1. 在 [PayPal Developer Sandbox](https://developer.paypal.com/dashboard/sandbox/accounts) 创建买家测试账号
+2. 将渠道配置切换为沙箱（`sandbox:true`）
+3. 通过 `/submit.php` POST 提交 PayPal 订单，跳转到 PayPal 沙箱页面
+4. 用沙箱买家账号登录完成支付
+
+#### 实盘测试
+
+将渠道配置切换为实盘（`sandbox:false`），用真实 PayPal 账号或信用卡支付最小金额（如 ¥1）。
+
+> **注意**：实盘测试会真实扣款。最小金额建议 ¥1（按汇率约 £0.11），过低（如 ¥0.01）转换后低于 PayPal 最小收款额会下单失败。
+
+### 7.7 支付流程
+
+```
+用户 → rpay /submit.php (POST, type=paypal)
+     → rpay 调用 PayPal API: POST /v2/checkout/orders
+     → 返回 approve_url，303 重定向用户到 PayPal 支付页面
+     → 用户在 PayPal 完成支付
+     → PayPal 重定向用户到 rpay /return/paypal?trade_no=xxx
+     → rpay 调用 PayPal API: POST /v2/checkout/orders/{id}/capture 确认支付
+     → 标记订单已付，重定向到商户 return_url
+     →（异步）PayPal 发送 Webhook 到 rpay /notify/paypal（兜底）
+```
+
+### 7.8 pay_type 和 pay_channel 对应关系
+
+`pay_channel.type` 必须对应 `pay_type.id`，否则提交订单会报"当前支付方式暂不可用"：
+
+| pay_type.id | pay_type.name | pay_channel.plugin | 说明 |
+|-------------|---------------|---------------------|------|
+| 1 | alipay | alipay | 支付宝 |
+| 2 | wxpay | wxpay / wxpayn | 微信支付 V2/V3 |
+| 3 | paypal | paypal | PayPal |
+| 4 | stripe | stripe | Stripe |
+
+> **注意**：`pay_type.status` 也必须为 `1`（启用），否则该支付方式不可用。
