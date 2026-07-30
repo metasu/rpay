@@ -1,0 +1,62 @@
+use std::{fs, net::SocketAddr, path::PathBuf};
+
+use clap::Parser;
+use rpay::{app, expire_pending_orders, retry_pending_notifications, session::SessionCodec, store::Store, AppState};
+use sqlx::mysql::MySqlPoolOptions;
+
+#[derive(Parser)]
+#[command(name = "rpay", version, about = "Rust rewrite of the EasyPay PHP gateway")]
+struct Cli {
+    #[arg(long, env = "RPAY_DATABASE_URL_FILE", default_value = "/opt/services/rpay/secrets/database-url")]
+    database_url_file: PathBuf,
+    #[arg(long, env = "RPAY_LISTEN", default_value = "127.0.0.1:16889")]
+    listen: SocketAddr,
+    #[arg(long, env = "RPAY_PUBLIC_BASE_URL", default_value = "https://yzf.anut.top")]
+    public_base_url: String,
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    tracing_subscriber::fmt().with_env_filter(tracing_subscriber::EnvFilter::from_default_env()).init();
+
+    let cli = Cli::parse();
+    let database_url = fs::read_to_string(&cli.database_url_file)
+        .map_err(|e| format!("failed to read {}: {e}", cli.database_url_file.display()))?
+        .trim()
+        .to_string();
+
+    let pool = MySqlPoolOptions::new()
+        .max_connections(10)
+        .connect(&database_url)
+        .await?;
+    let store = Store::new(pool);
+
+    // Session cookies are signed with the platform's existing `syskey`
+    // (already used by the legacy PHP app), so the signing secret survives
+    // deploys/restarts without needing a new secret file.
+    let syskey = store
+        .config_get("syskey")
+        .await?
+        .ok_or("pay_config.syskey missing — is the database installed?")?;
+
+    let state = AppState {
+        store,
+        public_base_url: cli.public_base_url.trim_end_matches('/').to_string(),
+        session: SessionCodec::new(syskey.into_bytes()),
+    };
+
+    tokio::spawn(retry_pending_notifications(state.clone()));
+    tokio::spawn(expire_pending_orders(state.clone()));
+
+    let router = app(state);
+    let listener = tokio::net::TcpListener::bind(cli.listen).await?;
+    tracing::info!(listen = %cli.listen, "rpay listening");
+    axum::serve(listener, router)
+        .with_graceful_shutdown(shutdown_signal())
+        .await?;
+    Ok(())
+}
+
+async fn shutdown_signal() {
+    let _ = tokio::signal::ctrl_c().await;
+}
