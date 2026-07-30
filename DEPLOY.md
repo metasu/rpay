@@ -759,6 +759,54 @@ openssl rsa -in app_private.pem -pubout -out app_public.pem
 }
 ```
 
+#### 插入支付渠道（pay_channel）
+
+渠道是实际对接支付平台的配置。以下插入 5 个渠道模板，填入你的密钥后即可使用：
+
+```sql
+-- 支付宝（type=1 对应 pay_type.id=1, plugin=alipay）
+INSERT INTO pay_channel (id, mode, type, plugin, name, rate, status, apptype, daytop, daystatus, paymin, paymax, appwxmp, appwxa, costrate, config, daymaxorder)
+VALUES (2, 0, 1, 'alipay', '支付宝', 100.00, 1, '2', 0, 0, '', '', NULL, NULL, 0.00,
+  '{"appid":"请填入支付宝APPID","appkey":"支付宝公钥","appsecret":"商户RSA私钥","appmchid":"","sign_type":"RSA2"}',
+  0)
+ON DUPLICATE KEY UPDATE name=VALUES(name);
+
+-- Stripe（type=4, plugin=stripe）
+INSERT INTO pay_channel (id, mode, type, plugin, name, rate, status, apptype, daytop, daystatus, paymin, paymax, appwxmp, appwxa, costrate, config, daymaxorder)
+VALUES (3, 0, 4, 'stripe', 'Stripe', 100.00, 0, NULL, 0, 0, '', '', NULL, NULL, 0.00,
+  '{"appsecret":"","appkey":"","currency":"usd","currency_rate":7.2}',
+  0)
+ON DUPLICATE KEY UPDATE name=VALUES(name);
+
+-- PayPal（type=6, plugin=paypal）
+INSERT INTO pay_channel (id, mode, type, plugin, name, rate, status, apptype, daytop, daystatus, paymin, paymax, appwxmp, appwxa, costrate, config, daymaxorder)
+VALUES (4, 0, 6, 'paypal', 'PayPal', 100.00, 0, NULL, 0, 0, '', '', NULL, NULL, 0.00,
+  '{"appid":"","appsecret":"","sandbox":true,"currency":"USD","currency_rate":7.2,"webhook_id":""}',
+  0)
+ON DUPLICATE KEY UPDATE name=VALUES(name);
+
+-- 微信支付V2（type=2, plugin=wxpay）
+INSERT INTO pay_channel (id, mode, type, plugin, name, rate, status, apptype, daytop, daystatus, paymin, paymax, appwxmp, appwxa, costrate, config, daymaxorder)
+VALUES (5, 0, 2, 'wxpay', '微信支付(V2)', 100.00, 0, NULL, 0, 0, NULL, NULL, NULL, NULL, NULL,
+  '{"appid":"","appmchid":"","appkey":""}',
+  0)
+ON DUPLICATE KEY UPDATE name=VALUES(name);
+
+-- 微信支付V3（type=2, plugin=wxpayn）
+INSERT INTO pay_channel (id, mode, type, plugin, name, rate, status, apptype, daytop, daystatus, paymin, paymax, appwxmp, appwxa, costrate, config, daymaxorder)
+VALUES (6, 0, 2, 'wxpayn', '微信支付(V3)', 100.00, 0, NULL, 0, 0, NULL, NULL, NULL, NULL, NULL,
+  '{"appid":"","appmchid":"","appsecret":"","appkey":"","mch_private_key":"","platform_public_key":"","publickeyid":""}',
+  0)
+ON DUPLICATE KEY UPDATE name=VALUES(name);
+```
+
+> **字段说明**：
+> - `type`：关联 `pay_type.id`（1=支付宝, 2=微信, 3=PayPal, 4=Stripe）
+> - `plugin`：关联 `pay_plugin.code`，决定用哪个支付模块
+> - `status`：1=启用, 0=禁用
+> - `config`：JSON 格式的渠道配置，不同插件字段不同
+> - `rate`：手续费率（百分比，100.00=无手续费）
+
 #### 导入后设置管理员凭据
 
 rpay 的管理员登录从数据库 `pay_config` 表读取 `admin_user` 和 `admin_pwd`，**不是**从 `secrets/admin-password` 文件读取。导入 dump 后需要手动设置：
