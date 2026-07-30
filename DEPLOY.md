@@ -774,14 +774,14 @@ ON DUPLICATE KEY UPDATE name=VALUES(name);
 -- Stripe（type=4, plugin=stripe）
 INSERT INTO pay_channel (id, mode, type, plugin, name, rate, status, apptype, daytop, daystatus, paymin, paymax, appwxmp, appwxa, costrate, config, daymaxorder)
 VALUES (3, 0, 4, 'stripe', 'Stripe', 100.00, 0, NULL, 0, 0, '', '', NULL, NULL, 0.00,
-  '{"appsecret":"","appkey":"","currency":"usd","currency_rate":7.2}',
+  '{"appsecret":"","appkey":"","currency":"eur","currency_rate":7.8}',
   0)
 ON DUPLICATE KEY UPDATE name=VALUES(name);
 
 -- PayPal（type=6, plugin=paypal）
 INSERT INTO pay_channel (id, mode, type, plugin, name, rate, status, apptype, daytop, daystatus, paymin, paymax, appwxmp, appwxa, costrate, config, daymaxorder)
 VALUES (4, 0, 6, 'paypal', 'PayPal', 100.00, 0, NULL, 0, 0, '', '', NULL, NULL, 0.00,
-  '{"appid":"","appsecret":"","sandbox":true,"currency":"USD","currency_rate":7.2,"webhook_id":""}',
+  '{"appid":"","appsecret":"","sandbox":true,"currency":"GBP","currency_rate":9.1,"webhook_id":""}',
   0)
 ON DUPLICATE KEY UPDATE name=VALUES(name);
 
