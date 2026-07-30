@@ -694,10 +694,8 @@ ON DUPLICATE KEY UPDATE v = VALUES(v);
 INSERT INTO pay_type (id, name, device, showname, status) VALUES
   (1, 'alipay', 0, '支付宝', 1),
   (2, 'wxpay',  0, '微信支付', 1),
-  (3, 'qqpay',  0, 'QQ钱包', 0),
-  (4, 'bank',   0, '网银支付', 0),
-  (5, 'jdpay',  0, '京东支付', 0),
-  (6, 'paypal', 0, 'PayPal', 0)
+  (3, 'paypal', 0, 'PayPal', 0),
+  (4, 'stripe', 0, 'Stripe', 0)
 ON DUPLICATE KEY UPDATE name=VALUES(name), showname=VALUES(showname);
 ```
 
@@ -712,7 +710,7 @@ INSERT INTO pay_plugin (code, name, shortname, url, types, localtypes) VALUES
   ('wxpay',   '微信支付V2',     '微信',   'https://pay.weixin.qq.com/',   'wxpay',                  'wxpay'),
   ('wxpayn',  '微信支付V3',     '微信',   'https://pay.weixin.qq.com/',   'wxpay',                  'wxpay'),
   ('paypal',  'PayPal',         'PayPal', 'https://www.paypal.com/',       'paypal',                 NULL),
-  ('stripe',  'Stripe',         'Stripe', 'https://stripe.com/',           'alipay,wxpay,bank,paypal', NULL)
+  ('stripe',  'Stripe',         'Stripe', 'https://stripe.com/',           'alipay,wxpay,paypal', NULL)
 ON DUPLICATE KEY UPDATE name=VALUES(name);
 ```
 
@@ -723,9 +721,9 @@ ON DUPLICATE KEY UPDATE name=VALUES(name);
 至少需要一个商户才能接收支付请求：
 
 ```sql
--- uid 1000: 测试商户，key 用于 API 签名
+-- uid 1: 测试商户，key 用于 API 签名
 INSERT INTO pay_user (uid, gid, upid, `key`, username, keytype, money, status, level, pay, settle, refund)
-VALUES (1000, 0, 0, '请替换为32位随机字符串', 'testmerchant', 0, 0.00, 1, 1, 1, 1, 1);
+VALUES (1, 0, 0, '请替换为32位随机字符串', 'testmerchant', 0, 0.00, 1, 1, 1, 1, 1);
 ```
 
 生成商户 key：
