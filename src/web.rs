@@ -35,6 +35,7 @@ pub fn app(state: AppState) -> Router {
         .route("/submit.php", post(submit).get(submit))
         .route("/notify/alipay", post(alipay_notify))
         .route("/return/alipay", get(alipay_return))
+        .route("/return/alipay-wait", get(alipay_wait))
         .route("/wappay/alipay/{trade_no}", get(alipay_wappay))
         .route("/notify/wxpay", post(wxpay_v2_notify))
         .route("/notify/wxpayv3", post(wxpay_v3_notify))
@@ -263,8 +264,9 @@ async fn pay_alipay(
         return text_response(StatusCode::SERVICE_UNAVAILABLE, "支付渠道配置错误");
     };
     let notify_url = format!("{}/notify/alipay", state.public_base_url);
+    let return_url = format!("{}/return/alipay-wait?trade_no={trade_no}", state.public_base_url);
     if is_mobile {
-        return match alipay::build_wap_pay_form(&cfg, trade_no, money, name, &notify_url, "", client_ip) {
+        return match alipay::build_wap_pay_form(&cfg, trade_no, money, name, &notify_url, &return_url, client_ip) {
             Ok(html) => Html(html).into_response(),
             Err(_) => text_response(StatusCode::INTERNAL_SERVER_ERROR, "支付宝下单失败"),
         };
@@ -291,13 +293,14 @@ async fn alipay_wappay(State(state): State<AppState>, Path(trade_no): Path<Strin
         return text_response(StatusCode::SERVICE_UNAVAILABLE, "支付渠道配置错误");
     };
     let notify_url = format!("{}/notify/alipay", state.public_base_url);
+    let return_url = format!("{}/return/alipay-wait?trade_no={trade_no}", state.public_base_url);
     match alipay::build_wap_pay_form(
         &cfg,
         &trade_no,
         &order.money,
         &order.name,
         &notify_url,
-        "",
+        &return_url,
         "0.0.0.0",
     ) {
         Ok(html) => Html(html).into_response(),
@@ -499,6 +502,14 @@ async fn alipay_return(
 
     Redirect::to(&build_callback_url(&order.return_url, &state, &order.trade_no).await)
         .into_response()
+}
+
+async fn alipay_wait(State(state): State<AppState>, Query(q): Query<ReturnQuery>) -> Response {
+    let Ok(order) = state.store.order_by_trade_no(&q.trade_no).await else {
+        return (StatusCode::NOT_FOUND, "order not found").into_response();
+    };
+    let callback_url = build_callback_url(&order.return_url, &state, &order.trade_no).await;
+    Html(templates::waiting_page(&order.trade_no, &callback_url)).into_response()
 }
 
 async fn build_callback_url(base_url: &str, state: &AppState, trade_no: &str) -> String {

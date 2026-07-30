@@ -141,6 +141,47 @@ pub fn qrcode_page(title: &str, qr_data: &str, trade_no: &str, redirect_url: &st
     page(title, "", &body)
 }
 
+pub fn waiting_page(trade_no: &str, redirect_url: &str) -> String {
+    let body = format!(
+        r#"<div class="center-box" style="text-align:center">
+<div class="card">
+<h1>支付完成，正在跳转...</h1>
+<p style="color:#6b7280;font-size:14px">3 秒后自动返回，请勿关闭此页面</p>
+<p id="msg" style="color:#6b7280;font-size:13px"></p>
+</div>
+</div>
+<script>
+var attempts = 0;
+function tryRedirect() {{
+  fetch('/api/order?trade_no={trade_no}').then(r => r.json()).then(function(d) {{
+    if (d.status === 1) {{
+      document.getElementById('msg').textContent = '支付确认成功，正在跳转...';
+      setTimeout(function() {{ window.location.href = {redirect_url}; }}, 3000);
+    }} else {{
+      attempts++;
+      if (attempts <= 10) {{
+        document.getElementById('msg').textContent = '等待支付确认...(' + attempts + ')';
+        setTimeout(tryRedirect, 3000);
+      }} else {{
+        document.getElementById('msg').textContent = '确认超时，请刷新页面或联系客服';
+      }}
+    }}
+  }}).catch(function() {{
+    attempts++;
+    if (attempts <= 10) {{
+      document.getElementById('msg').textContent = '网络异常，重试中...(' + attempts + ')';
+      setTimeout(tryRedirect, 3000);
+    }}
+  }});
+}}
+tryRedirect();
+</script>"#,
+        trade_no = escape(trade_no),
+        redirect_url = serde_json::to_string(redirect_url).unwrap_or_else(|_| "\"\"".to_string()),
+    );
+    page("支付跳转", "", &body)
+}
+
 pub fn status_badge(status: i8) -> String {
     match status {
         1 => "<span class=\"badge ok\">已支付</span>".to_string(),
