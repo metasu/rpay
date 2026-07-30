@@ -13,12 +13,16 @@
 |------|---------|------|
 | Rust toolchain (rustc + cargo) | 1.75+ | 编译源码 |
 | MySQL / MariaDB | 5.7+ / 10.3+ | 数据存储 |
-| Nginx / Nginx Proxy Manager / Caddy | 任意 | HTTPS 反向代理 |
+| Nginx（宝塔自带或独立安装） | 任意 | HTTPS 反向代理 |
 | systemd | 任意 | 服务管理 |
 
-### 可选软件
-- **Docker + Nginx Proxy Manager**: 如果你用 NPM 做反代和 SSL 证书管理
-- **aaPanel / 宝塔面板**: 如果你习惯用面板管理 Nginx/MySQL
+### 推荐方案：宝塔面板
+
+推荐使用**宝塔面板**管理 Nginx 和 MySQL，可视化操作，降低运维门槛：
+- 自动安装 Nginx + MySQL/MariaDB
+- 可视化管理数据库（phpMyAdmin）
+- 一键申请 SSL 证书
+- 可视化配置反向代理
 
 ---
 
@@ -50,6 +54,26 @@ rustc --version  # 确认 >= 1.75
 
 ### 3.2 安装并配置 MySQL
 
+#### 方式 A：宝塔面板安装（推荐）
+
+1. 安装宝塔面板：
+```bash
+# Ubuntu/Debian
+wget -O install.sh https://download.bt.cn/install/install-ubuntu_6.0.sh && bash install.sh ed8484bec
+```
+
+2. 在宝塔面板中安装 **Nginx** 和 **MySQL 5.7+**（或 MariaDB）
+
+3. 在宝塔面板 **数据库** → **添加数据库**：
+   - 数据库名：`rpay`（或任意名称）
+   - 用户名：`rpay`（或任意名称）
+   - 密码：设置强密码
+   - 字符集：**utf8mb4**
+
+4. 记下数据库名、用户名、密码，后续 3.6 节配置 `database-url` 时需要
+
+#### 方式 B：手动安装
+
 ```bash
 # Ubuntu/Debian
 apt update && apt install -y mysql-server
@@ -68,38 +92,58 @@ mysql_secure_installation
 
 ```bash
 mysql -uroot -p <<'SQL'
-CREATE DATABASE pay CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;
-CREATE USER 'pay'@'localhost' IDENTIFIED BY '你的强密码';
-GRANT ALL PRIVILEGES ON pay.* TO 'pay'@'localhost';
+CREATE DATABASE rpay CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;
+CREATE USER 'rpay'@'localhost' IDENTIFIED BY '你的强密码';
+GRANT ALL PRIVILEGES ON rpay.* TO 'rpay'@'localhost';
 FLUSH PRIVILEGES;
 SQL
 ```
 
 ### 3.3 导入数据库表结构
 
-数据库表结构来自旧版 PHP 支付网关（EasyPay），rpay 复用相同的表结构。如果你有旧数据库的 `mysqldump` 备份，直接导入：
+数据库表结构来自旧版 PHP 支付网关（EasyPay），rpay 复用相同的表结构，共 29 张表。
+
+> **重要**：必须导入完整的数据库 dump。仅手动创建 `pay_config`/`pay_user`/`pay_order`/`pay_channel` 4 张表是不够的——`pay_type`、`pay_plugin` 等表缺失会导致 `/admin/channels` 等页面返回 500 Internal Server Error。
+
+#### 方式 A：从旧服务器导入完整 dump（推荐）
 
 ```bash
-# 从旧服务器导出（在旧服务器执行）
+# 从旧服务器导出（包含完整表结构和数据）
 mysqldump -uroot -p pay > pay_schema.sql
+# 或导出为 gzip
+gzip pay_schema.sql
 
-# 在新服务器导入
-mysql -uroot -p pay < pay_schema.sql
+# 在新服务器导入（宝塔环境用 127.0.0.1 连接）
+mysql -urpay -p你的数据库密码 -h127.0.0.1 rpay < pay_schema.sql
+# 或从 gzip 直接导入
+zcat pay_20260730_150057.sql.gz | mysql -urpay -p你的数据库密码 -h127.0.0.1 rpay
 ```
 
-如果没有旧数据库，需要手动创建核心表。以下是最关键的 4 张表：
+> **宝塔面板导入**：也可以在宝塔 → 数据库 → 点击数据库名 → **导入** 上传 sql 文件
+
+完整 dump 包含以下 29 张表：
+
+```
+pay_anounce, pay_batch, pay_blacklist, pay_cache, pay_channel, pay_config,
+pay_domain, pay_group, pay_invitecode, pay_log, pay_order, pay_plugin,
+pay_psorder, pay_psreceiver, pay_record, pay_refundorder, pay_regcode,
+pay_risk, pay_roll, pay_settle, pay_subchannel, pay_suborder, pay_transfer,
+pay_type, pay_user, pay_weixin, pay_wework, pay_wxkfaccount, pay_wxkflog
+```
+
+其中 `pay_type`（支付方式）和 `pay_plugin`（支付插件）是 channels 页面正常工作的前提。
+
+#### 方式 B：无旧数据库时手动建表（完整 29 张表）
+
+如果没有旧数据库 dump，需要手动创建所有 29 张表。以下为完整建表 SQL，可在宝塔 phpMyAdmin 中执行：
 
 ```sql
--- pay_config: 系统配置（必须包含 syskey）
+-- pay_config: 系统配置
 CREATE TABLE IF NOT EXISTS `pay_config` (
   `k` varchar(32) NOT NULL,
   `v` text,
   PRIMARY KEY (`k`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
-
--- 插入 syskey（32位随机字符串，用于 session 加密）
-INSERT INTO `pay_config` (`k`, `v`) VALUES ('syskey', '替换为你的32位随机字符串')
-ON DUPLICATE KEY UPDATE `v` = VALUES(`v`);
 
 -- pay_user: 商户表
 CREATE TABLE IF NOT EXISTS `pay_user` (
@@ -110,44 +154,102 @@ CREATE TABLE IF NOT EXISTS `pay_user` (
   `pwd` varchar(32) DEFAULT NULL,
   `account` varchar(128) DEFAULT NULL,
   `username` varchar(128) DEFAULT NULL,
+  `codename` varchar(32) DEFAULT NULL,
+  `settle_id` tinyint(4) NOT NULL DEFAULT '1',
+  `alipay_uid` varchar(32) DEFAULT NULL,
+  `qq_uid` varchar(32) DEFAULT NULL,
+  `wx_uid` varchar(32) DEFAULT NULL,
   `money` decimal(10,2) NOT NULL,
   `email` varchar(32) DEFAULT NULL,
   `phone` varchar(20) DEFAULT NULL,
+  `qq` varchar(20) DEFAULT NULL,
+  `url` varchar(64) DEFAULT NULL,
+  `cert` tinyint(4) NOT NULL DEFAULT '0',
+  `certtype` tinyint(4) NOT NULL DEFAULT '0',
+  `certmethod` tinyint(4) NOT NULL DEFAULT '0',
+  `certno` varchar(18) DEFAULT NULL,
+  `certname` varchar(32) DEFAULT NULL,
+  `certtime` datetime DEFAULT NULL,
+  `certtoken` varchar(64) DEFAULT NULL,
+  `certcorpno` varchar(30) DEFAULT NULL,
+  `certcorpname` varchar(80) DEFAULT NULL,
   `addtime` datetime DEFAULT NULL,
   `lasttime` datetime DEFAULT NULL,
-  `status` tinyint(4) NOT NULL DEFAULT '0',
+  `endtime` datetime DEFAULT NULL,
+  `level` tinyint(1) NOT NULL DEFAULT '1',
   `pay` tinyint(1) NOT NULL DEFAULT '1',
-  `keytype` tinyint(1) NOT NULL DEFAULT '0',
+  `settle` tinyint(1) NOT NULL DEFAULT '1',
   `keylogin` tinyint(1) NOT NULL DEFAULT '1',
-  `pay_minmoney` varchar(10) DEFAULT NULL,
+  `apply` tinyint(1) NOT NULL DEFAULT '0',
+  `mode` tinyint(4) NOT NULL DEFAULT '0',
+  `status` tinyint(4) NOT NULL DEFAULT '0',
+  `refund` tinyint(1) NOT NULL DEFAULT '1',
+  `transfer` tinyint(1) NOT NULL DEFAULT '0',
+  `keytype` tinyint(1) NOT NULL DEFAULT '0',
+  `publickey` varchar(500) DEFAULT NULL,
+  `channelinfo` text,
+  `ordername` varchar(255) DEFAULT NULL,
+  `msgconfig` text,
+  `remain_money` varchar(20) DEFAULT NULL,
+  `open_code` tinyint(1) NOT NULL DEFAULT '0',
+  `deposit` decimal(10,2) DEFAULT NULL,
+  `voice_devid` varchar(30) DEFAULT NULL,
+  `voice_order` tinyint(1) NOT NULL DEFAULT '0',
   `pay_maxmoney` varchar(10) DEFAULT NULL,
-  PRIMARY KEY (`uid`)
+  `pay_minmoney` varchar(10) DEFAULT NULL,
+  PRIMARY KEY (`uid`),
+  KEY `email` (`email`),
+  KEY `phone` (`phone`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
 
 -- pay_order: 订单表
 CREATE TABLE IF NOT EXISTS `pay_order` (
-  `trade_no` varchar(20) NOT NULL,
-  `out_trade_no` varchar(64) NOT NULL,
-  `api_trade_no` varchar(64) DEFAULT NULL,
+  `trade_no` char(19) NOT NULL,
+  `out_trade_no` varchar(150) NOT NULL,
+  `api_trade_no` varchar(150) DEFAULT NULL,
   `uid` int(11) unsigned NOT NULL,
-  `type` int(11) unsigned NOT NULL,
-  `channel` int(11) unsigned NOT NULL,
-  `name` varchar(128) NOT NULL,
-  `money` varchar(10) NOT NULL,
-  `realmoney` varchar(10) DEFAULT NULL,
+  `tid` tinyint(11) unsigned NOT NULL DEFAULT '0',
+  `type` int(10) unsigned NOT NULL,
+  `channel` int(10) unsigned NOT NULL,
+  `name` varchar(64) NOT NULL,
+  `money` decimal(10,2) NOT NULL,
+  `realmoney` decimal(10,2) DEFAULT NULL,
+  `getmoney` decimal(10,2) DEFAULT NULL,
   `profitmoney` decimal(10,2) DEFAULT NULL,
-  `notify_url` varchar(255) NOT NULL,
-  `return_url` varchar(255) NOT NULL,
-  `param` text,
-  `status` tinyint(4) NOT NULL DEFAULT '0',
-  `payurl` text,
-  `buyer` varchar(64) DEFAULT NULL,
+  `refundmoney` decimal(10,2) DEFAULT NULL,
+  `notify_url` varchar(255) DEFAULT NULL,
+  `return_url` varchar(255) DEFAULT NULL,
+  `param` varchar(255) DEFAULT NULL,
   `addtime` datetime NOT NULL,
   `endtime` datetime DEFAULT NULL,
   `date` date DEFAULT NULL,
+  `domain` varchar(64) DEFAULT NULL,
+  `domain2` varchar(64) DEFAULT NULL,
+  `ip` varchar(50) DEFAULT NULL,
+  `buyer` varchar(100) DEFAULT NULL,
+  `status` tinyint(1) NOT NULL DEFAULT '0',
+  `notify` int(5) NOT NULL DEFAULT '0',
+  `notifytime` datetime DEFAULT NULL,
+  `invite` int(11) unsigned NOT NULL DEFAULT '0',
+  `invitemoney` decimal(10,2) DEFAULT NULL,
+  `combine` tinyint(1) NOT NULL DEFAULT '0',
+  `profits` int(11) NOT NULL DEFAULT '0',
+  `profits2` int(11) NOT NULL DEFAULT '0',
+  `settle` tinyint(1) NOT NULL DEFAULT '0',
+  `subchannel` int(11) NOT NULL DEFAULT '0',
+  `payurl` varchar(500) DEFAULT NULL,
+  `ext` text,
+  `version` tinyint(1) NOT NULL DEFAULT '0',
+  `bill_trade_no` varchar(150) DEFAULT NULL,
+  `bill_mch_trade_no` varchar(150) DEFAULT NULL,
+  `mobile` varchar(100) DEFAULT NULL,
   PRIMARY KEY (`trade_no`),
   KEY `uid` (`uid`),
-  KEY `out_trade_no` (`out_trade_no`)
+  KEY `out_trade_no` (`out_trade_no`,`uid`),
+  KEY `api_trade_no` (`api_trade_no`),
+  KEY `bill_trade_no` (`bill_trade_no`),
+  KEY `bill_mch_trade_no` (`bill_mch_trade_no`),
+  KEY `date` (`date`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
 
 -- pay_channel: 支付渠道表
@@ -159,15 +261,406 @@ CREATE TABLE IF NOT EXISTS `pay_channel` (
   `name` varchar(30) NOT NULL,
   `rate` decimal(5,2) NOT NULL DEFAULT '100.00',
   `status` tinyint(1) NOT NULL DEFAULT '0',
+  `apptype` varchar(50) DEFAULT NULL,
+  `daytop` int(10) DEFAULT '0',
+  `daystatus` tinyint(1) DEFAULT '0',
+  `paymin` varchar(10) DEFAULT NULL,
+  `paymax` varchar(10) DEFAULT NULL,
+  `appwxmp` int(11) DEFAULT NULL,
+  `appwxa` int(11) DEFAULT NULL,
+  `costrate` decimal(5,2) DEFAULT NULL,
   `config` text,
+  `daymaxorder` int(10) DEFAULT '0',
+  PRIMARY KEY (`id`),
+  KEY `type` (`type`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+
+-- pay_type: 支付方式表（channels 页面依赖此表）
+CREATE TABLE IF NOT EXISTS `pay_type` (
+  `id` int(11) unsigned NOT NULL AUTO_INCREMENT,
+  `name` varchar(30) NOT NULL,
+  `device` int(1) unsigned NOT NULL DEFAULT '0',
+  `showname` varchar(30) NOT NULL,
+  `status` tinyint(1) NOT NULL DEFAULT '0',
+  PRIMARY KEY (`id`),
+  KEY `name` (`name`,`device`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+
+-- pay_plugin: 支付插件表
+CREATE TABLE IF NOT EXISTS `pay_plugin` (
+  `name` varchar(30) NOT NULL,
+  `showname` varchar(60) DEFAULT NULL,
+  `author` varchar(60) DEFAULT NULL,
+  `link` varchar(255) DEFAULT NULL,
+  `types` varchar(50) DEFAULT NULL,
+  `transtypes` varchar(50) DEFAULT NULL,
+  PRIMARY KEY (`name`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+
+-- pay_group: 商户组
+CREATE TABLE IF NOT EXISTS `pay_group` (
+  `gid` int(11) unsigned NOT NULL AUTO_INCREMENT,
+  `name` varchar(30) NOT NULL,
+  `info` varchar(1024) DEFAULT NULL,
+  `isbuy` tinyint(1) NOT NULL DEFAULT '0',
+  `price` decimal(10,2) DEFAULT NULL,
+  `sort` int(10) NOT NULL DEFAULT '0',
+  `expire` int(10) NOT NULL DEFAULT '0',
+  `config` text,
+  `settings` text,
+  `visible` varchar(30) DEFAULT NULL,
+  `index` int(11) NOT NULL DEFAULT '0',
+  PRIMARY KEY (`gid`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+
+-- pay_anounce: 公告
+CREATE TABLE IF NOT EXISTS `pay_anounce` (
+  `id` int(11) unsigned NOT NULL AUTO_INCREMENT,
+  `content` text,
+  `color` varchar(10) DEFAULT NULL,
+  `sort` int(11) NOT NULL DEFAULT '1',
+  `addtime` datetime DEFAULT NULL,
+  `status` tinyint(1) NOT NULL DEFAULT '1',
   PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+
+-- pay_batch: 结算批次
+CREATE TABLE IF NOT EXISTS `pay_batch` (
+  `batch` varchar(20) NOT NULL,
+  `allmoney` decimal(10,2) NOT NULL,
+  `count` int(11) NOT NULL DEFAULT '0',
+  `time` datetime DEFAULT NULL,
+  `status` tinyint(1) NOT NULL DEFAULT '0',
+  PRIMARY KEY (`batch`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+
+-- pay_blacklist: 黑名单
+CREATE TABLE IF NOT EXISTS `pay_blacklist` (
+  `id` int(11) unsigned NOT NULL AUTO_INCREMENT,
+  `type` tinyint(1) NOT NULL DEFAULT '0',
+  `content` varchar(50) NOT NULL,
+  `addtime` datetime NOT NULL,
+  `endtime` datetime DEFAULT NULL,
+  `remark` varchar(80) DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `content` (`content`,`type`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+
+-- pay_cache: 缓存
+CREATE TABLE IF NOT EXISTS `pay_cache` (
+  `k` varchar(32) NOT NULL,
+  `v` longtext,
+  `expire` int(11) NOT NULL DEFAULT '0',
+  PRIMARY KEY (`k`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+
+-- pay_domain: 域名
+CREATE TABLE IF NOT EXISTS `pay_domain` (
+  `id` int(11) unsigned NOT NULL AUTO_INCREMENT,
+  `uid` int(11) NOT NULL DEFAULT '0',
+  `domain` varchar(128) NOT NULL,
+  `status` tinyint(1) NOT NULL DEFAULT '0',
+  `addtime` datetime DEFAULT NULL,
+  `endtime` datetime DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  KEY `domain` (`domain`,`uid`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+
+-- pay_invitecode: 邀请码
+CREATE TABLE IF NOT EXISTS `pay_invitecode` (
+  `id` int(11) unsigned NOT NULL AUTO_INCREMENT,
+  `code` varchar(40) NOT NULL,
+  `addtime` datetime NOT NULL,
+  `usetime` datetime DEFAULT NULL,
+  `uid` int(11) DEFAULT NULL,
+  `status` tinyint(1) NOT NULL DEFAULT '0',
+  PRIMARY KEY (`id`),
+  KEY `code` (`code`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+
+-- pay_log: 日志
+CREATE TABLE IF NOT EXISTS `pay_log` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `uid` int(11) NOT NULL DEFAULT '0',
+  `type` varchar(20) DEFAULT NULL,
+  `date` datetime NOT NULL,
+  `ip` varchar(50) DEFAULT NULL,
+  `city` varchar(20) DEFAULT NULL,
+  `data` text,
+  PRIMARY KEY (`id`),
+  KEY `logincheck` (`ip`,`date`,`uid`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+
+-- pay_psorder: 分账订单
+CREATE TABLE IF NOT EXISTS `pay_psorder` (
+  `id` int(11) unsigned NOT NULL AUTO_INCREMENT,
+  `rid` int(11) NOT NULL,
+  `trade_no` char(19) NOT NULL,
+  `api_trade_no` varchar(150) NOT NULL,
+  `sub_trade_no` varchar(25) DEFAULT NULL,
+  `settle_no` varchar(150) DEFAULT NULL,
+  `money` decimal(10,2) NOT NULL,
+  `status` tinyint(1) NOT NULL DEFAULT '0',
+  `result` text,
+  `addtime` datetime DEFAULT NULL,
+  `delay` tinyint(1) NOT NULL DEFAULT '0',
+  `rdata` text,
+  PRIMARY KEY (`id`),
+  KEY `trade_no` (`trade_no`),
+  KEY `addtime` (`addtime`,`delay`,`status`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+
+-- pay_psreceiver: 分账接收方
+CREATE TABLE IF NOT EXISTS `pay_psreceiver` (
+  `id` int(11) unsigned NOT NULL AUTO_INCREMENT,
+  `channel` int(11) NOT NULL,
+  `subchannel` int(11) DEFAULT NULL,
+  `uid` int(11) DEFAULT NULL,
+  `account` varchar(128) NOT NULL,
+  `name` varchar(50) DEFAULT NULL,
+  `rate` varchar(10) DEFAULT NULL,
+  `minmoney` varchar(10) DEFAULT NULL,
+  `status` tinyint(1) NOT NULL DEFAULT '0',
+  `addtime` datetime DEFAULT NULL,
+  `info` varchar(1024) DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  KEY `channel` (`channel`,`uid`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+
+-- pay_record: 资金记录
+CREATE TABLE IF NOT EXISTS `pay_record` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `uid` int(11) NOT NULL,
+  `action` tinyint(1) NOT NULL DEFAULT '0',
+  `money` decimal(10,2) NOT NULL,
+  `oldmoney` decimal(10,2) NOT NULL,
+  `newmoney` decimal(10,2) NOT NULL,
+  `type` varchar(20) DEFAULT NULL,
+  `trade_no` varchar(64) DEFAULT NULL,
+  `date` datetime NOT NULL,
+  PRIMARY KEY (`id`),
+  KEY `uid` (`uid`),
+  KEY `trade_no` (`trade_no`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+
+-- pay_refundorder: 退款订单
+CREATE TABLE IF NOT EXISTS `pay_refundorder` (
+  `refund_no` char(19) NOT NULL,
+  `out_refund_no` varchar(150) NOT NULL,
+  `trade_no` char(19) NOT NULL,
+  `uid` int(11) NOT NULL DEFAULT '0',
+  `money` decimal(10,2) NOT NULL,
+  `reducemoney` decimal(10,2) DEFAULT NULL,
+  `status` tinyint(1) NOT NULL DEFAULT '0',
+  `addtime` datetime DEFAULT NULL,
+  `endtime` datetime DEFAULT NULL,
+  PRIMARY KEY (`refund_no`),
+  KEY `out_refund_no` (`out_refund_no`,`uid`),
+  KEY `trade_no` (`trade_no`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+
+-- pay_regcode: 注册码
+CREATE TABLE IF NOT EXISTS `pay_regcode` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `uid` int(11) NOT NULL DEFAULT '0',
+  `scene` varchar(20) NOT NULL DEFAULT '',
+  `type` tinyint(1) NOT NULL DEFAULT '0',
+  `code` varchar(32) NOT NULL,
+  `to` varchar(32) DEFAULT NULL,
+  `time` int(11) NOT NULL,
+  `ip` varchar(50) DEFAULT NULL,
+  `status` tinyint(1) NOT NULL DEFAULT '0',
+  `errcount` int(11) NOT NULL DEFAULT '0',
+  PRIMARY KEY (`id`),
+  KEY `code` (`to`,`type`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+
+-- pay_risk: 风控
+CREATE TABLE IF NOT EXISTS `pay_risk` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `uid` int(11) NOT NULL DEFAULT '0',
+  `type` tinyint(1) NOT NULL DEFAULT '0',
+  `url` varchar(64) DEFAULT NULL,
+  `content` varchar(64) DEFAULT NULL,
+  `date` datetime DEFAULT NULL,
+  `status` tinyint(1) NOT NULL DEFAULT '0',
+  PRIMARY KEY (`id`),
+  KEY `uid` (`uid`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+
+-- pay_roll: 轮播
+CREATE TABLE IF NOT EXISTS `pay_roll` (
+  `id` int(11) unsigned NOT NULL AUTO_INCREMENT,
+  `type` int(11) unsigned NOT NULL,
+  `name` varchar(30) NOT NULL,
+  `kind` int(1) unsigned NOT NULL DEFAULT '0',
+  `info` text,
+  `status` tinyint(1) NOT NULL DEFAULT '0',
+  `index` int(11) NOT NULL DEFAULT '0',
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+
+-- pay_settle: 结算
+CREATE TABLE IF NOT EXISTS `pay_settle` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `uid` int(11) NOT NULL,
+  `batch` varchar(20) DEFAULT NULL,
+  `auto` tinyint(1) NOT NULL DEFAULT '1',
+  `type` tinyint(1) NOT NULL DEFAULT '1',
+  `account` varchar(128) NOT NULL,
+  `username` varchar(128) NOT NULL,
+  `money` decimal(10,2) NOT NULL,
+  `realmoney` decimal(10,2) NOT NULL,
+  `addtime` datetime DEFAULT NULL,
+  `endtime` datetime DEFAULT NULL,
+  `status` tinyint(1) NOT NULL DEFAULT '0',
+  `transfer_no` varchar(64) DEFAULT NULL,
+  `transfer_channel` int(10) unsigned DEFAULT NULL,
+  `transfer_status` tinyint(1) NOT NULL DEFAULT '0',
+  `transfer_result` varchar(64) DEFAULT NULL,
+  `transfer_date` datetime DEFAULT NULL,
+  `transfer_ext` text,
+  `result` varchar(64) DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  KEY `uid` (`uid`),
+  KEY `batch` (`batch`),
+  KEY `transfer_no` (`transfer_no`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+
+-- pay_subchannel: 子渠道
+CREATE TABLE IF NOT EXISTS `pay_subchannel` (
+  `id` int(11) unsigned NOT NULL AUTO_INCREMENT,
+  `channel` int(11) NOT NULL,
+  `uid` int(11) NOT NULL,
+  `name` varchar(30) NOT NULL,
+  `status` tinyint(1) NOT NULL DEFAULT '0',
+  `info` text,
+  `addtime` datetime DEFAULT NULL,
+  `usetime` datetime DEFAULT NULL,
+  `apply_id` int(11) DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  KEY `channel` (`channel`),
+  KEY `uid` (`uid`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+
+-- pay_suborder: 子订单
+CREATE TABLE IF NOT EXISTS `pay_suborder` (
+  `sub_trade_no` varchar(25) NOT NULL,
+  `trade_no` char(19) NOT NULL,
+  `api_trade_no` varchar(150) DEFAULT NULL,
+  `money` decimal(10,2) NOT NULL,
+  `refundmoney` decimal(10,2) DEFAULT NULL,
+  `status` tinyint(1) NOT NULL DEFAULT '0',
+  `settle` tinyint(1) NOT NULL DEFAULT '0',
+  PRIMARY KEY (`sub_trade_no`),
+  KEY `trade_no` (`trade_no`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+
+-- pay_transfer: 转账
+CREATE TABLE IF NOT EXISTS `pay_transfer` (
+  `biz_no` char(19) NOT NULL,
+  `out_biz_no` varchar(150) NOT NULL DEFAULT '',
+  `pay_order_no` varchar(80) DEFAULT NULL,
+  `uid` int(11) NOT NULL,
+  `type` varchar(10) NOT NULL,
+  `channel` int(10) unsigned NOT NULL,
+  `account` varchar(128) NOT NULL,
+  `username` varchar(128) DEFAULT NULL,
+  `money` decimal(10,2) NOT NULL,
+  `costmoney` decimal(10,2) DEFAULT NULL,
+  `addtime` datetime DEFAULT NULL,
+  `paytime` datetime DEFAULT NULL,
+  `status` tinyint(1) NOT NULL DEFAULT '0',
+  `api` tinyint(1) NOT NULL DEFAULT '0',
+  `desc` varchar(80) DEFAULT NULL,
+  `result` varchar(80) DEFAULT NULL,
+  `ext` text,
+  PRIMARY KEY (`biz_no`),
+  KEY `uid` (`uid`),
+  KEY `out_biz_no` (`out_biz_no`,`uid`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+
+-- pay_weixin: 微信公众号
+CREATE TABLE IF NOT EXISTS `pay_weixin` (
+  `id` int(11) unsigned NOT NULL AUTO_INCREMENT,
+  `type` tinyint(4) unsigned NOT NULL DEFAULT '0',
+  `name` varchar(30) NOT NULL,
+  `status` tinyint(1) NOT NULL DEFAULT '0',
+  `appid` varchar(150) DEFAULT NULL,
+  `appsecret` varchar(250) DEFAULT NULL,
+  `access_token` varchar(300) DEFAULT NULL,
+  `addtime` datetime DEFAULT NULL,
+  `updatetime` datetime DEFAULT NULL,
+  `expiretime` datetime DEFAULT NULL,
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+
+-- pay_wework: 企业微信
+CREATE TABLE IF NOT EXISTS `pay_wework` (
+  `id` int(11) unsigned NOT NULL AUTO_INCREMENT,
+  `name` varchar(30) NOT NULL,
+  `status` tinyint(1) NOT NULL DEFAULT '0',
+  `appid` varchar(150) DEFAULT NULL,
+  `appsecret` varchar(250) DEFAULT NULL,
+  `access_token` varchar(300) DEFAULT NULL,
+  `addtime` datetime DEFAULT NULL,
+  `updatetime` datetime DEFAULT NULL,
+  `expiretime` datetime DEFAULT NULL,
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+
+-- pay_wxkfaccount: 微信客服账号
+CREATE TABLE IF NOT EXISTS `pay_wxkfaccount` (
+  `id` int(11) unsigned NOT NULL AUTO_INCREMENT,
+  `wid` int(11) unsigned NOT NULL,
+  `openkfid` varchar(60) NOT NULL,
+  `url` varchar(100) DEFAULT NULL,
+  `cursor` varchar(30) DEFAULT NULL,
+  `name` varchar(300) DEFAULT NULL,
+  `addtime` datetime NOT NULL,
+  `usetime` datetime DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `openkfid` (`openkfid`),
+  KEY `wid` (`wid`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+
+-- pay_wxkflog: 微信客服日志
+CREATE TABLE IF NOT EXISTS `pay_wxkflog` (
+  `trade_no` char(19) NOT NULL,
+  `aid` int(11) unsigned NOT NULL,
+  `sid` char(32) NOT NULL,
+  `payurl` varchar(500) NOT NULL,
+  `addtime` datetime NOT NULL,
+  `status` tinyint(1) NOT NULL DEFAULT '0',
+  PRIMARY KEY (`trade_no`),
+  KEY `sid` (`sid`),
+  KEY `addtime` (`addtime`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+
+-- 插入 syskey（32位随机字符串，用于 session 加密）
+INSERT INTO `pay_config` (`k`, `v`) VALUES ('syskey', '替换为你的32位随机字符串')
+ON DUPLICATE KEY UPDATE `v` = VALUES(`v`);
 ```
 
 生成 syskey：
 
 ```bash
 openssl rand -hex 16
+```
+
+#### 导入后设置管理员凭据
+
+rpay 的管理员登录从数据库 `pay_config` 表读取 `admin_user` 和 `admin_pwd`，**不是**从 `secrets/admin-password` 文件读取。导入 dump 后需要手动设置：
+
+```bash
+ADMIN_PASS=$(openssl rand -base64 12 | tr -d '/+=' | head -c 16)
+mysql -urpay -p你的数据库密码 -h127.0.0.1 rpay <<SQL
+INSERT INTO pay_config (k, v) VALUES ('admin_user', 'admin')
+ON DUPLICATE KEY UPDATE v = VALUES(v);
+INSERT INTO pay_config (k, v) VALUES ('admin_pwd', '$ADMIN_PASS')
+ON DUPLICATE KEY UPDATE v = VALUES(v);
+SQL
+echo "Admin password: $ADMIN_PASS"
 ```
 
 ### 3.4 创建系统用户和部署目录
@@ -188,24 +681,18 @@ mkdir -p $INSTALL_DIR/{bin,config,secrets,data,logs,backups}
 ```bash
 # SRC_DIR 为源码所在目录（可任意）
 # 编译产物直接输出到 /opt/services/rpay/bin
-SRC_DIR=/root/workspace/rpay
+SRC_DIR=/source/rpay
 INSTALL_DIR=/opt/services/rpay
 
-# ---- 获取源码（三选一） ----
+# ---- 获取源码 ----
 
-# 方式 A：从旧服务器打包复制
-# 在旧服务器执行：
-#   tar czf /tmp/rpay-src.tar.gz -C /root/workspace rpay
+# 从 GitHub 克隆
+git clone https://github.com/metasu/rpay.git $SRC_DIR
+
+# 或从旧服务器打包复制
+#   tar czf /tmp/rpay-src.tar.gz -C /source rpay
 #   scp /tmp/rpay-src.tar.gz 新服务器:/tmp/
-# 在新服务器执行：
-#   mkdir -p /root/workspace
-#   tar xzf /tmp/rpay-src.tar.gz -C /root/workspace
-
-# 方式 B：用 rsync 从旧服务器同步
-#   rsync -avz 旧服务器:/root/workspace/rpay/ /root/workspace/rpay/
-
-# 方式 C：如果已推送到 git 仓库
-#   git clone https://your-git-repo/rpay.git $SRC_DIR
+#   tar xzf /tmp/rpay-src.tar.gz -C /source
 
 # ---- 编译 ----
 cd $SRC_DIR
@@ -251,7 +738,9 @@ chmod 600 /opt/services/rpay/secrets/database-url
 
 > **注意**：`database-url` 文件末尾不要有换行符，用 `echo -n`。
 
-#### secrets/admin-password
+> **注意**：`secrets/admin-password` 文件仅作为密码记录备份，rpay 程序**不读取**此文件。管理员登录凭据从数据库 `pay_config` 表的 `admin_user` 和 `admin_pwd` 键读取（见 3.3 节）。
+
+#### secrets/admin-password（可选，仅作记录）
 
 ```bash
 echo -n "你的管理后台密码" > /opt/services/rpay/secrets/admin-password
@@ -300,7 +789,24 @@ systemctl enable rpay.service
 
 ### 3.8 配置反向代理
 
-#### 方案 A：Nginx 直接反代
+#### 方案 A：宝塔面板 Nginx 反代（推荐）
+
+1. 宝塔面板 → **网站** → **添加站点**：
+   - 域名：`你的域名`
+   - PHP版本：**纯静态**
+   - 不创建数据库
+
+2. 点击站点名 → **反向代理** → **添加反向代理**：
+   - 代理名称：`rpay`
+   - 目标URL：`http://127.0.0.1:16889`
+   - 发送域名：`$host`
+   - 启用代理
+
+3. 点击站点名 → **SSL** → **Let's Encrypt**：
+   - 申请免费 SSL 证书
+   - 开启 **强制HTTPS**
+
+#### 方案 B：Nginx 手动配置
 
 ```nginx
 server {
@@ -326,7 +832,7 @@ server {
 }
 ```
 
-#### 方案 B：Nginx Proxy Manager (Docker)
+#### 方案 C：Nginx Proxy Manager (Docker)
 
 如果你用 NPM（jc21/nginx-proxy-manager）：
 
@@ -340,7 +846,7 @@ server {
 4. **SSL** 标签页：申请 Let's Encrypt 证书，开启 Force SSL
 5. 保存
 
-#### 方案 C：Caddy（自动 HTTPS）
+#### 方案 D：Caddy（自动 HTTPS）
 
 ```Caddyfile
 你的域名 {
@@ -377,17 +883,16 @@ journalctl -u rpay.service -f
 ├── config/
 │   └── config.toml        # 配置文件（监听地址、域名、环境）
 ├── secrets/
-│   ├── database-url       # MySQL 连接串（敏感）
-│   └── admin-password     # 管理后台密码（敏感）
+│   └── database-url       # MySQL 连接串（敏感）
 ├── data/                  # 运行时数据（预留，当前为空）
 ├── logs/                  # 日志目录（预留，日志实际输出到 journal）
 └── backups/               # 备份目录（预留）
 ```
 
-源码目录（编译用，不参与运行）：
+源码目录（编译用，不参与运行，可在任意位置）：
 
 ```
-/root/workspace/rpay/
+/root/workspace/rpay/   # 本机默认路径，可改为任意目录
 ├── src/
 │   ├── main.rs            # 入口，启动 HTTP 服务和后台任务
 │   ├── web.rs             # 路由、支付提交、回调处理
@@ -461,6 +966,12 @@ Rust release 编译内存消耗大，512MB VPS 会 OOM。解决办法：添加 2
 `ProtectSystem=strict` 会将整个文件系统设为只读，必须用 `ReadWritePaths` 显式开放需要写入的目录。`MemoryDenyWriteExecute=true` 会阻止 JIT，如果将来引入需要 JIT 的依赖需要去掉此选项。
 
 ### 10. 源码和部署目录缺一不可
-- `/root/workspace/rpay/`（源码）— 用于修改代码和编译，不参与运行
+- 源码目录（如 `/root/workspace/rpay/`）— 用于修改代码和编译，不参与运行，可在任意位置
 - `/opt/services/rpay/`（部署目录）— 运行时需要的二进制、配置、密钥
 - 迁移到新 VPS 时，两者都需要，或者在新 VPS 上只放二进制 + 配置，源码可以之后从 git 克隆
+
+### 11. 必须导入完整数据库 dump
+仅手动创建 `pay_config`/`pay_user`/`pay_order`/`pay_channel` 4 张表是不够的。`pay_type` 表缺失会导致 `/admin/channels` 页面 500 错误（`list_channels_full()` SQL 中 `LEFT JOIN pay_type B ON A.type=B.id`）。必须从旧服务器导入完整的 29 张表 dump。
+
+### 12. 管理员凭据在数据库中，不在 secrets 文件
+rpay 的管理员登录从 `pay_config` 表读取 `admin_user` 和 `admin_pwd`，不是从 `secrets/admin-password` 文件。导入 dump 后需手动 INSERT 这两个键。修改密码也是更新数据库，不是改文件。
