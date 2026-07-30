@@ -1,0 +1,4 @@
+listen = "127.0.0.1:16889"
+public_base_url = "https://rpay.example.com"
+environment = "production"
+table_prefix = "pay"

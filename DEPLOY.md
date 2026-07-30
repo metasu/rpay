@@ -648,6 +648,119 @@ ON DUPLICATE KEY UPDATE `v` = VALUES(`v`);
 openssl rand -hex 16
 ```
 
+#### 插入初始配置数据（pay_config）
+
+以下 SQL 插入网关运行所需的最低配置项：
+
+```sql
+-- 管理员凭据（密码请改为强密码）
+INSERT INTO pay_config (k, v) VALUES ('admin_user', 'admin')
+ON DUPLICATE KEY UPDATE v = VALUES(v);
+INSERT INTO pay_config (k, v) VALUES ('admin_pwd', '123456')
+ON DUPLICATE KEY UPDATE v = VALUES(v);
+INSERT INTO pay_config (k, v) VALUES ('admin_paypwd', '123456')
+ON DUPLICATE KEY UPDATE v = VALUES(v);
+
+-- 站点基本信息
+INSERT INTO pay_config (k, v) VALUES ('sitename', '聚合支付平台')
+ON DUPLICATE KEY UPDATE v = VALUES(v);
+INSERT INTO pay_config (k, v) VALUES ('kfqq', '1000000000')
+ON DUPLICATE KEY UPDATE v = VALUES(v);
+
+-- 功能开关
+INSERT INTO pay_config (k, v) VALUES ('reg_open', '1')
+ON DUPLICATE KEY UPDATE v = VALUES(v);
+INSERT INTO pay_config (k, v) VALUES ('settle_open', '1')
+ON DUPLICATE KEY UPDATE v = VALUES(v);
+INSERT INTO pay_config (k, v) VALUES ('test_open', '1')
+ON DUPLICATE KEY UPDATE v = VALUES(v);
+INSERT INTO pay_config (k, v) VALUES ('recharge', '1')
+ON DUPLICATE KEY UPDATE v = VALUES(v);
+INSERT INTO pay_config (k, v) VALUES ('user_refund', '1')
+ON DUPLICATE KEY UPDATE v = VALUES(v);
+INSERT INTO pay_config (k, v) VALUES ('verifytype', '1')
+ON DUPLICATE KEY UPDATE v = VALUES(v);
+
+-- 系统参数
+INSERT INTO pay_config (k, v) VALUES ('version', '2052')
+ON DUPLICATE KEY UPDATE v = VALUES(v);
+INSERT INTO pay_config (k, v) VALUES ('template', 'index1')
+ON DUPLICATE KEY UPDATE v = VALUES(v);
+```
+
+#### 插入支付方式（pay_type）
+
+```sql
+INSERT INTO pay_type (id, name, device, showname, status) VALUES
+  (1, 'alipay', 0, '支付宝', 1),
+  (2, 'wxpay',  0, '微信支付', 1),
+  (3, 'qqpay',  0, 'QQ钱包', 0),
+  (4, 'bank',   0, '网银支付', 0),
+  (5, 'jdpay',  0, '京东支付', 0),
+  (6, 'paypal', 0, 'PayPal', 0)
+ON DUPLICATE KEY UPDATE name=VALUES(name), showname=VALUES(showname);
+```
+
+#### 插入支付插件（pay_plugin）
+
+rpay 内置支持以下插件（`code` 列对应 `pay_channel.plugin` 字段）。仅插入你实际使用的插件即可：
+
+```sql
+-- rpay 内置实现的插件（代码中有对应模块）
+INSERT INTO pay_plugin (code, name, shortname, url, types, localtypes) VALUES
+  ('alipay',  '支付宝官方',     '支付宝', 'https://open.alipay.com/',     'alipay',                 'alipay'),
+  ('wxpay',   '微信支付V2',     '微信',   'https://pay.weixin.qq.com/',   'wxpay',                  'wxpay'),
+  ('wxpayn',  '微信支付V3',     '微信',   'https://pay.weixin.qq.com/',   'wxpay',                  'wxpay'),
+  ('paypal',  'PayPal',         'PayPal', 'https://www.paypal.com/',       'paypal',                 NULL),
+  ('stripe',  'Stripe',         'Stripe', 'https://stripe.com/',           'alipay,wxpay,bank,paypal', NULL)
+ON DUPLICATE KEY UPDATE name=VALUES(name);
+```
+
+> **注意**：`localtypes` 列为 `NULL` 的插件表示该插件由上游聚合支付平台处理，rpay 不直接对接。`localtypes` 不为 `NULL` 的插件（如 `alipay`、`wxpay`、`wxpayn`）由 rpay 直接调用官方 API。
+
+#### 插入示例商户（pay_user）
+
+至少需要一个商户才能接收支付请求：
+
+```sql
+-- uid 1000: 测试商户，key 用于 API 签名
+INSERT INTO pay_user (uid, gid, upid, `key`, username, keytype, money, status, level, pay, settle, refund)
+VALUES (1000, 0, 0, '请替换为32位随机字符串', 'testmerchant', 0, 0.00, 1, 1, 1, 1, 1);
+```
+
+生成商户 key：
+
+```bash
+openssl rand -hex 16
+```
+
+#### 生成支付宝 RSA 密钥对
+
+支付宝支付渠道需要 RSA 密钥对。在支付宝开放平台获取商户私钥和支付宝公钥后，填入 `pay_channel.config` 的 JSON 配置中：
+
+```bash
+# 生成 RSA2048 密钥对（推荐 RSA2）
+openssl genrsa -out app_private.pem 2048
+openssl rsa -in app_private.pem -pubout -out app_public.pem
+
+# 将私钥内容（去掉头尾标记和换行）填入 channel config 的 appsecret 字段
+# 将支付宝公钥填入 appkey 字段
+# appid 填入 appid 字段
+# sign_type 设为 "RSA2"
+```
+
+渠道配置示例（通过管理后台 `/admin/channels` 页面填写）：
+
+```json
+{
+  "appid": "2021004xxxxxxxxx",
+  "appkey": "支付宝公钥（一长串Base64）",
+  "appsecret": "商户私钥（一长串Base64）",
+  "appmchid": "",
+  "sign_type": "RSA2"
+}
+```
+
 #### 导入后设置管理员凭据
 
 rpay 的管理员登录从数据库 `pay_config` 表读取 `admin_user` 和 `admin_pwd`，**不是**从 `secrets/admin-password` 文件读取。导入 dump 后需要手动设置：
@@ -716,6 +829,8 @@ chmod 700 $INSTALL_DIR/secrets
 > ```
 
 ### 3.6 配置文件
+
+> 仓库中提供了示例文件：`config/config.example.toml` 和 `secrets/database-url.example`，可直接复制后修改。
 
 #### config.toml
 
