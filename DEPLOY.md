@@ -1175,6 +1175,60 @@ curl -sS -L https://你的WordPress域名/ | head -c 32
 
 输出应直接以 `<!DOCTYPE HTML>` 或 `<!doctype html>` 开始，不应含有 `4选项`。本问题未修改 modown 或 monster8 的主题模板。
 
+### 15. WordPress 登录页“您即将提交的信息不安全”警告
+
+**现象**：访问 `https://blog.anut.top/wp-login.php` 时浏览器弹出“您即将提交的信息不安全 / 由于系统正在使用不安全的连接提交此表单，他人将能看到您的信息”警告，登录页样式同时错乱。
+
+**根因**：站点前端是 HTTPS（openresty 反向代理/CDN 在前端终结 SSL，回源为 HTTP），但 WordPress 数据库 `wp_options` 中的 `siteurl` 和 `home` 仍是 `http://blog.anut.top`。WordPress 据此生成的登录表单 action、`redirect_to`、CSS/JS 资源链接全部是 `http://`：
+
+```html
+<form name="loginform" action="http://blog.anut.top/wp-login.php" method="post">
+<input type="hidden" name="redirect_to" value="http://blog.anut.top/wp-admin/" />
+<link rel='stylesheet' href='http://blog.anut.top/wp-admin/load-styles.php?...' />
+```
+
+HTTPS 页面提交 HTTP 表单触发浏览器“不安全提交”警告；HTTP 资源被混合内容拦截导致样式错乱。`curl -sI http://blog.anut.top/wp-login.php` 实际返回 `301 → https://`，证明 SSL 在代理层终结，WordPress 进程本身看到的仍是 HTTP，因此默认不会自识别为 HTTPS。
+
+**修复**：两步配合，缺一不可。
+
+1. **更新数据库** `wp_options`，把 `siteurl` 和 `home` 改为 `https://blog.anut.top`：
+
+   ```sql
+   UPDATE wp_options SET option_value = 'https://blog.anut.top'
+   WHERE option_name IN ('siteurl', 'home');
+   ```
+
+2. **修改 `wp-config.php`**，在 `/* Add any custom values between this line and the "stop editing" line. */` 之后、`/* That's all, stop editing! Happy publishing. */` 之前加入：
+
+   ```php
+   define('FORCE_SSL_ADMIN', true);
+
+   // 反向代理/CDN 在前端终结 SSL，回源为 HTTP，需让 WordPress 识别前端协议为 HTTPS
+   if (!empty($_SERVER['HTTP_X_FORWARDED_PROTO'])
+       && strpos($_SERVER['HTTP_X_FORWARDED_PROTO'], 'https') !== false) {
+       $_SERVER['HTTPS'] = 'on';
+   }
+   ```
+
+   仅改数据库而不加这段代码，会因为 WordPress 仍认为自己是 HTTP 而与 `FORCE_SSL_ADMIN`/前端 HTTPS 形成重定向循环；仅加这段代码而不改数据库，表单 action 仍是 `http://`，警告不会消失。
+
+**备份**（执行前务必先做）：
+
+```bash
+cp /www/wwwroot/wpsite/wp-config.php /www/wwwroot/wpsite/wp-config.php.bak.$(date +%Y%m%d%H%M%S)
+mysqldump -uwpsite -p'密码' wpsite wp_options > /tmp/wp_options_backup_$(date +%Y%m%d%H%M%S).sql
+```
+
+**验证**：
+
+```bash
+curl -s https://blog.anut.top/wp-login.php | grep -iE 'form name="loginform"|redirect_to|load-styles'
+```
+
+输出应全部为 `https://blog.anut.top/...`，无 `http://` 链接。浏览器刷新登录页，警告消失、样式恢复正常。
+
+> 后续如发现文章正文/图片里仍残留 `http://` 链接，可用 Better Search Replace 插件批量替换 `http://blog.anut.top` → `https://blog.anut.top`。
+
 ---
 
 ## 七、PayPal 对接配置
@@ -1388,3 +1442,152 @@ UPDATE pay_type SET status = 1 WHERE name = 'stripe';
 | `appkey` | Stripe Webhook Signing Secret | `whsec_...` |
 | `currency` | 收款货币（小写） | `eur` / `gbp` / `usd` |
 | `currency_rate` | CNY→目标货币汇率 | 7.8 |
+
+---
+
+## 九、WordPress (erphpdown) 适配
+
+### 9.1 概述
+
+rpay 通过兼容「易支付协议」与 WordPress erphpdown 插件对接。erphpdown 插件作为商户端，向 rpay 的 `/submit.php` 发起 POST 表单提交，rpay 根据 `type` 参数路由到对应支付渠道（支付宝、微信、Stripe、PayPal）。
+
+### 9.2 支付类型与 paytype 映射
+
+| rpay `type` 参数 | erphpdown paytype | 说明 | 管理后台代号 |
+|---|---|---|---|
+| `alipay` | 141 | 支付宝 | `rpay-ali` |
+| `wxpay` | 142 | 微信支付 | `rpay-wx` |
+| `stripe` | 143 | Stripe 信用卡 | `rpay-stripe` |
+| `paypal` | 144 | PayPal | `rpay-paypal` |
+
+### 9.3 修改的文件清单
+
+#### erphpdown 插件
+
+| 文件 | 修改内容 |
+|---|---|
+| `payment/rpay.php` | **新建**。商户端发起文件，组装签名参数并自动提交到 rpay `/submit.php`。`type` 参数从 URL GET 传入，支持 `alipay`/`wxpay`/`stripe`/`paypal`。 |
+| `payment/rpay/notify_url.php` | **新建**。异步回调处理，验证 MD5 签名后调用 `epd_set_order_success` 或 `epd_set_wppay_success` 更新订单状态。 |
+| `payment/rpay/return_url.php` | **新建**。同步跳转处理，验证签名后重定向到前台成功页面或 `erphpdown_return` cookie 中的地址。 |
+| `admin/erphp-payment.php` | 新增 rpay 设置区块（第11节）：商户ID、商户key、API地址、隐藏支付宝/微信/Stripe/PayPal 四个复选框；保存/加载 options；更新支付接口顺序说明。 |
+| `includes/pay.erphp.php` | 新增 rpay 30 秒去重窗口：同一用户对同一资源发起 rpay 支付时，若 30 秒内已有未支付订单则复用，避免重复建单。 |
+| `static/erphpdown.js` | 修复 `.erphpdown-iframe` 点击事件重复绑定导致的重复下单问题：使用 `off().on()` 并 `stopImmediatePropagation()`。 |
+
+#### modown 主题
+
+| 文件 | 修改内容 |
+|---|---|
+| `action/user.php` | 两处 VIP 购买区块各新增 4 个 rpay 支付按钮（微信、支付宝、Stripe、PayPal），位于 easepay 之后、vpay 之前。使用 `get_option('erphpdown_rpay_id')` 控制整组显示，各子项有独立隐藏开关。 |
+| `template/user.php` | 充值表单三处修改：① paytype 路由新增 141/142/143/144 → `rpay.php?type=xxx`；② 自定义支付顺序 switch 新增 `rpay-ali`/`rpay-wx`/`rpay-stripe`/`rpay-paypal` case；③ 默认支付方式区新增 rpay 四个 radio button。 |
+
+#### monster8 主题
+
+| 文件 | 修改内容 |
+|---|---|
+| `action/user.php` | VIP 购买区块新增 4 个 rpay 支付按钮（微信、支付宝、Stripe、PayPal），位于 easepay 之后、vpay 之前。 |
+| `template/erphpdown-recharge.php` | 充值表单三处修改：① paytype 路由新增 141/142/143/144；② switch 新增 4 个 case；③ 默认支付方式区新增 4 个 radio button。 |
+
+### 9.4 WordPress 管理后台配置
+
+1. 进入 **erphpdown → 支付设置 → 11、rpay（支付宝/微信/Stripe/PayPal）**
+2. 填写：
+   - **商户ID**：rpay 后台创建商户后获得的 `pid`
+   - **商户key**：对应商户的 `key`（用于 MD5 签名）
+   - **API地址**：rpay 服务地址，**结尾不要加 `/`**，例如 `https://pay.example.com`
+3. 勾选需要隐藏的支付方式（支付宝/微信/Stripe/PayPal），未勾选的方式将显示给用户
+4. （可选）在「充值支付接口顺序」中填入 `rpay-ali,rpay-wx,rpay-stripe,rpay-paypal` 自定义充值页支付方式排序
+
+### 9.5 rpay 后台渠道配置
+
+rpay 需在管理后台配置对应支付渠道，rpay 的 `type` 参数会匹配 `pay_type` 表中的 `name` 字段：
+
+| pay_type.name | 对应 plugin | config 结构 |
+|---|---|---|
+| `alipay` | `alipay` | `AlipayConfig`（appid, appsecret, appkey, sign_type） |
+| `wxpay` | `wxpay` 或 `wxpayn`/`wxpaynp` | `WxpayV2Config`（appid, appmchid, appkey）或 `WxpayV3Config` |
+| `stripe` | `stripe` | `StripeConfig`（appsecret, appkey, currency, currency_rate, payment_method_types） |
+| `paypal` | `paypal` | `PaypalConfig`（client_id, client_secret, currency, currency_rate） |
+
+> **注意**：`pay_type.name` 必须与 erphpdown 传来的 `type` 参数完全一致（小写），否则 rpay 返回「当前支付方式暂不可用」。
+
+### 9.6 签名机制
+
+erphpdown → rpay 请求签名（MD5）：
+
+1. 将所有参数按 key 升序排列（ksort）
+2. 跳过空值和 `sign`/`sign_type` 字段
+3. 拼接为 `k1=v1&k2=v2&...` 格式
+4. 末尾追加商户 key：`...&kN=vN{key}`
+5. MD5 取小写 hex
+
+rpay → erphpdown 回调签名验证（`notify_url.php`/`return_url.php`）：
+
+同样 ksort + 跳过空值/sign/sign_type + 拼接 + 追加 key + MD5。
+
+### 9.7 排坑记录
+
+#### 9.7.1 重复下单问题
+
+**现象**：用户点击 VIP 购买按钮时，有时会创建两个相同订单。
+
+**根因**：`erphpdown.js` 中 `.erphpdown-iframe` 的 click 事件被多次绑定（layer.js 弹窗每次打开都会重新绑定），导致一次点击触发两次表单提交。
+
+**修复**：
+- `static/erphpdown.js`：改用 `$("body").off("click.erphpdown-iframe").on("click.erphpdown-iframe", ...)` 确保只绑定一次，并 `stopImmediatePropagation()` 阻止后续 handler。
+- `includes/pay.erphp.php`：新增 30 秒去重窗口，同一用户对同一资源/同一金额的 rpay 未支付订单在 30 秒内复用，不重复创建。
+
+#### 9.7.2 pay.erphp.php 文件首字节问题
+
+**现象**：`pay.erphp.php` 文件开头有 BOM 或空行，导致 `header()` 调用时报 "headers already sent" 错误。
+
+**修复**：确保文件第一字节为 `<?php`，无 BOM、无前导空行。
+
+#### 9.7.3 Alipay wap pay vs page pay
+
+**现象**：支付宝支付在桌面端打开后报签名错误。
+
+**根因**：rpay 根据 User-Agent 判断移动端/桌面端。移动端直接渲染 wap-pay 表单；桌面端显示二维码，扫码后打开 wap-pay 表单。如果商户的支付宝应用只签约了「手机网站支付」而未签约「电脑网站支付」，使用 page pay 会报错。
+
+**修复**：rpay 桌面端统一使用 wap-pay + 二维码方案，不依赖 page pay 产品。
+
+#### 9.7.4 Stripe 汇率转换
+
+**注意**：erphpdown 传入的金额为人民币（CNY），rpay Stripe 渠道通过 `currency_rate` 字段将 CNY 转换为目标货币。例如 `currency_rate=7.8` 表示 7.8 CNY = 1 EUR。`currency` 字段必须与 Stripe 账户支持的货币一致。
+
+#### 9.7.5 PayPal 汇率转换
+
+与 Stripe 类似，PayPal 渠道的 `currency_rate` 将 CNY 分转换为 PayPal 目标货币的最小单位。`currency` 字段必须与 PayPal 商户账户支持的货币一致。
+
+#### 9.7.6 rpay API 地址末尾斜杠
+
+**注意**：erphpdown 后台填写的 rpay API 地址**结尾不要加 `/`**。`rpay.php` 中使用 `rtrim($rpay_url, '/') . '/submit.php'` 拼接提交地址，如果末尾多加斜杠虽然会被 rtrim 处理，但部分主题的 JS 代码可能直接拼接 URL 导致问题。
+
+### 9.8 支付流程图
+
+```
+用户选择支付方式
+  → erphpdown rpay.php?type={alipay|wxpay|stripe|paypal}
+  → 组装参数 + MD5 签名
+  → POST 到 rpay /submit.php
+  → rpay 验证签名、创建/复用订单
+  → 根据 type 路由到对应支付渠道
+    → alipay: 渲染 wap-pay 表单（移动端）或二维码页面（桌面端）
+    → wxpay:  调用微信统一下单，返回二维码 URL，渲染二维码页面
+    → stripe: 调用 Stripe Checkout Sessions API，303 重定向到 Stripe Checkout
+    → paypal: 调用 PayPal Orders API，303 重定向到 PayPal 审批页
+  → 用户完成支付
+  → 支付渠道异步通知 rpay
+  → rpay 验证签名，标记订单已付
+  → rpay 回调 erphpdown notify_url.php
+  → erphpdown 验证签名，更新订单状态（VIP 或余额）
+  → 用户被重定向到前台成功页面
+```
+
+### 9.9 部署步骤
+
+1. 将修改后的 erphpdown 插件文件上传到 `/wp-content/plugins/erphpdown/`
+2. 将修改后的主题文件上传到对应主题目录（`modown/` 或 `monster8/`）
+3. WordPress 后台 → erphpdown → 支付设置 → 配置 rpay 商户信息
+4. rpay 后台 → 确保 `pay_type` 表中有 `alipay`/`wxpay`/`stripe`/`paypal` 记录且状态为启用
+5. rpay 后台 → 为每个 pay_type 配置至少一个启用的 pay_channel（含正确的 plugin 和 config JSON）
+6. 测试支付流程：小额充值 → 验证回调 → 验证订单状态更新
