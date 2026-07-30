@@ -1,3 +1,5 @@
 target/
 secrets/*
 !secrets/*.example
+config/config.toml
+rpay_*.sql.gz
