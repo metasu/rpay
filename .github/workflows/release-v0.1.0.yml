@@ -15,7 +15,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          ref: v0.1.0
 
       - name: Block embedded credentials
         shell: python
@@ -68,18 +68,6 @@ jobs:
           tar -C dist -czf "dist/$package.tar.gz" "$package"
           sha256sum "dist/$package.tar.gz" > "dist/$package.tar.gz.sha256"
 
-      - name: Ensure tag
-        run: |
-          git fetch --tags --force
-          if git rev-parse -q --verify refs/tags/v0.1.0 >/dev/null; then
-            test "$(git rev-list -n 1 v0.1.0)" = "$GITHUB_SHA"
-          else
-            git config user.name github-actions[bot]
-            git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-            git tag -a v0.1.0 -m "rpay v0.1.0"
-            git push origin v0.1.0
-          fi
-
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
@@ -88,5 +76,6 @@ jobs:
             dist/rpay-v0.1.0-linux-x86_64.tar.gz \
             dist/rpay-v0.1.0-linux-x86_64.tar.gz.sha256 \
             --repo "$GITHUB_REPOSITORY" \
+            --verify-tag \
             --title "rpay v0.1.0" \
             --notes "First versioned rpay release. Supports Alipay, WeChat Pay V2/V3, PayPal and Stripe, including Stripe Card + Alipay Checkout and privacy-minimized Stripe/PayPal checkout names.\n\nSecurity: no production database URL, administrator credential, merchant key, provider secret, webhook secret, or static private-key fixture is included. Provider examples are empty or explicit placeholders; seeded channels are disabled by default.\n\nThe Linux x86_64 archive includes the binary, deployment documentation, database schema, non-sensitive seed data, and example configuration. Verify it with the attached SHA-256 file."
