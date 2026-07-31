@@ -63,7 +63,7 @@ pub fn legacy_password_hash(password: &str, salt: &str) -> String {
 }
 
 /// Generates a random 32-char lowercase alphanumeric merchant API key, matching
-/// the shape of legacy-generated keys (e.g. `XKpfRC76pBK5kuKvbV7bplPcbkUdUVHb`).
+/// the shape of legacy-generated keys.
 pub fn generate_merchant_key() -> String {
     const CHARSET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
     let mut rng = rand::thread_rng();
@@ -129,8 +129,7 @@ pub enum CryptoError {
     InvalidSignature,
 }
 
-/// RSA2 (SHA256 + PKCS#1 v1.5) sign using a raw-base64-DER PKCS8 private key,
-/// matching PHP `openssl_sign($data, $sign, $pkey, OPENSSL_ALGO_SHA256)`.
+/// RSA2 (SHA256 + PKCS#1 v1.5) sign using a raw-base64-DER PKCS8 private key.
 pub fn rsa_sign_sha256(data: &str, private_key_raw_b64: &str) -> Result<String, CryptoError> {
     let private_key = parse_private_key(private_key_raw_b64)?;
     let signing_key = SigningKey::<Sha256>::new(private_key);
@@ -156,10 +155,7 @@ pub fn rsa_verify_sha256(
     Ok(verifying_key.verify(data.as_bytes(), &signature).is_ok())
 }
 
-/// Plain RSA (SHA1 + PKCS#1 v1.5), matching PHP `openssl_sign($data, $sign, $pkey)`
-/// with no explicit algo argument (PHP defaults to SHA1). Alipay's plain
-/// `sign_type=RSA` (as opposed to `RSA2`) uses this weaker digest — some
-/// older/never-migrated merchant apps are only configured for it.
+/// Plain RSA (SHA1 + PKCS#1 v1.5), matching legacy Alipay `sign_type=RSA`.
 pub fn rsa_sign_sha1(data: &str, private_key_raw_b64: &str) -> Result<String, CryptoError> {
     let private_key = parse_private_key(private_key_raw_b64)?;
     let signing_key = SigningKey::<Sha1>::new(private_key);
@@ -185,8 +181,7 @@ pub fn rsa_verify_sha1(
     Ok(verifying_key.verify(data.as_bytes(), &signature).is_ok())
 }
 
-/// Parse a decimal amount string (e.g. "1.00") into minor units (fen), matching
-/// the EasyPay convention of 2 decimal CNY. Rejects malformed input.
+/// Parse a decimal amount string into minor units (fen).
 pub fn parse_yuan_to_fen(value: &str) -> Option<i64> {
     if value.is_empty() || !value.bytes().all(|b| b.is_ascii_digit() || b == b'.') {
         return None;
@@ -210,6 +205,19 @@ pub fn fen_to_yuan_string(fen: i64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rsa::pkcs8::{EncodePrivateKey, EncodePublicKey};
+
+    fn ephemeral_keypair() -> (String, String) {
+        let mut rng = rand::rngs::OsRng;
+        let private_key = RsaPrivateKey::new(&mut rng, 2048).unwrap();
+        let public_key = RsaPublicKey::from(&private_key);
+        let private_der = private_key.to_pkcs8_der().unwrap();
+        let public_der = public_key.to_public_key_der().unwrap();
+        (
+            STANDARD.encode(private_der.as_bytes()),
+            STANDARD.encode(public_der.as_bytes()),
+        )
+    }
 
     #[test]
     fn sign_content_matches_php_ksort_semantics() {
@@ -233,8 +241,6 @@ mod tests {
 
     #[test]
     fn legacy_password_hash_matches_php_reference() {
-        // Independently computed via Python:
-        // md5(md5('mypassword123') + md5('1277180438' + '1001'))
         assert_eq!(
             legacy_password_hash("mypassword123", "1001"),
             "96d760bb8925f4dc4ab5453a3e62e816"
@@ -243,20 +249,11 @@ mod tests {
 
     #[test]
     fn rsa_sha1_roundtrip_with_ephemeral_key() {
-        use rsa::pkcs8::{EncodePrivateKey, EncodePublicKey};
-
-        let mut rng = rand::rngs::OsRng;
-        let private_key = RsaPrivateKey::new(&mut rng, 2048).unwrap();
-        let public_key = RsaPublicKey::from(&private_key);
-        let private_der = private_key.to_pkcs8_der().unwrap();
-        let public_der = public_key.to_public_key_der().unwrap();
-        let private_b64 = STANDARD.encode(private_der.as_bytes());
-        let public_b64 = STANDARD.encode(public_der.as_bytes());
+        let (private_key, public_key) = ephemeral_keypair();
         let data = "hello=world";
-        let signature = rsa_sign_sha1(data, &private_b64).unwrap();
-
-        assert!(rsa_verify_sha1(data, &signature, &public_b64).unwrap());
-        assert!(!rsa_verify_sha1("tampered", &signature, &public_b64).unwrap());
+        let signature = rsa_sign_sha1(data, &private_key).unwrap();
+        assert!(rsa_verify_sha1(data, &signature, &public_key).unwrap());
+        assert!(!rsa_verify_sha1("tampered", &signature, &public_key).unwrap());
     }
 
     #[test]
