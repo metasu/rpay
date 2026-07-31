@@ -256,6 +256,10 @@ fn parse_config<T: serde::de::DeserializeOwned>(channel: &ChannelFullRow) -> Opt
     channel.config.as_deref().and_then(|c| serde_json::from_str::<T>(c).ok())
 }
 
+fn external_checkout_name(_merchant_order_name: &str) -> &'static str {
+    "Source Code"
+}
+
 /// Most merchant apps are only approved for the "手机网站支付" (wap pay)
 /// product, not "电脑网站支付" (page pay) — using the wrong `method`/
 /// `product_code` against Alipay's gateway can manifest as sundry errors
@@ -381,7 +385,16 @@ async fn pay_paypal(state: &AppState, channel: &ChannelFullRow, trade_no: &str, 
     };
     let return_url = format!("{}/return/paypal?trade_no={trade_no}", state.public_base_url);
     let cancel_url = format!("{}/return/paypal?trade_no={trade_no}&cancelled=true", state.public_base_url);
-    match paypal::create_order(&cfg, trade_no, fen, name, &return_url, &cancel_url).await {
+    match paypal::create_order(
+        &cfg,
+        trade_no,
+        fen,
+        external_checkout_name(name),
+        &return_url,
+        &cancel_url,
+    )
+    .await
+    {
         Ok(order) => Redirect::to(&order.approve_url).into_response(),
         Err(_) => text_response(StatusCode::INTERNAL_SERVER_ERROR, "PayPal 下单失败"),
     }
@@ -396,7 +409,16 @@ async fn pay_stripe(state: &AppState, channel: &ChannelFullRow, trade_no: &str, 
         state.public_base_url
     );
     let cancel_url = format!("{}/return/stripe?trade_no={trade_no}&cancelled=true", state.public_base_url);
-    match stripe::create_checkout_session(&cfg, trade_no, fen, name, &success_url, &cancel_url).await {
+    match stripe::create_checkout_session(
+        &cfg,
+        trade_no,
+        fen,
+        external_checkout_name(name),
+        &success_url,
+        &cancel_url,
+    )
+    .await
+    {
         Ok(session) => Redirect::to(&session.url).into_response(),
         Err(_) => text_response(StatusCode::INTERNAL_SERVER_ERROR, "Stripe 下单失败"),
     }
@@ -953,6 +975,14 @@ async fn stripe_notify(State(state): State<AppState>, headers: HeaderMap, body: 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn external_checkout_name_does_not_expose_merchant_order_name() {
+        assert_eq!(
+            external_checkout_name("Independent Site - User 123"),
+            "Source Code"
+        );
+    }
 
     #[test]
     fn return_queries_accept_legacy_and_canonical_cancel_values() {

@@ -1466,11 +1466,11 @@ rpay 通过兼容「易支付协议」与 WordPress erphpdown 插件对接。erp
 
 | 文件 | 修改内容 |
 |---|---|
-| `payment/rpay.php` | **新建**。商户端发起文件，组装签名参数并自动提交到 rpay `/submit.php`。`type` 参数从 URL GET 传入，支持 `alipay`/`wxpay`/`stripe`/`paypal`。 |
-| `payment/rpay/notify_url.php` | **新建**。异步回调处理，验证 MD5 签名后调用 `epd_set_order_success` 或 `epd_set_wppay_success` 更新订单状态。 |
+| `payment/rpay.php` | **新建**。商户端发起文件，组装签名参数并自动提交到 rpay `/submit.php`。`type` 参数从 URL GET 传入，支持 `alipay`/`wxpay`/`stripe`/`paypal`。调用 `_epd_create_page_order('rpay_'.$type)` 使 `ice_alipay` 字段存储具体支付类型。 |
+| `payment/rpay/notify_url.php` | **新建**。异步回调处理，验证 MD5 签名后从数据库查出订单的 `ice_alipay` 值传给 `epd_set_order_success`，更新订单状态。 |
 | `payment/rpay/return_url.php` | **新建**。同步跳转处理，验证签名后重定向到前台成功页面或 `erphpdown_return` cookie 中的地址。 |
 | `admin/erphp-payment.php` | 新增 rpay 设置区块（第11节）：商户ID、商户key、API地址、隐藏支付宝/微信/Stripe/PayPal 四个复选框；保存/加载 options；更新支付接口顺序说明。 |
-| `includes/pay.erphp.php` | 新增 rpay 30 秒去重窗口：同一用户对同一资源发起 rpay 支付时，若 30 秒内已有未支付订单则复用，避免重复建单。 |
+| `includes/pay.erphp.php` | 新增 rpay 30 秒去重窗口，按 `ice_alipay` 精确匹配（`rpay_stripe`/`rpay_paypal` 等），同一用户对同一资源、同一金额、同一支付类型的未支付订单在 30 秒内复用，避免重复建单且不跨类型误合并。 |
 | `static/erphpdown.js` | 修复 `.erphpdown-iframe` 点击事件重复绑定导致的重复下单问题：使用 `off().on()` 并 `stopImmediatePropagation()`。 |
 
 #### modown 主题
@@ -1536,6 +1536,17 @@ rpay → erphpdown 回调签名验证（`notify_url.php`/`return_url.php`）：
 - `static/erphpdown.js`：改用 `$("body").off("click.erphpdown-iframe").on("click.erphpdown-iframe", ...)` 确保只绑定一次，并 `stopImmediatePropagation()` 阻止后续 handler。
 - `includes/pay.erphp.php`：新增 30 秒去重窗口，同一用户对同一资源/同一金额的 rpay 未支付订单在 30 秒内复用，不重复创建。
 
+#### 9.7.1b 跨支付类型订单误合并
+
+**现象**：用户先用 rpay-Stripe 发起 17 元支付并取消，再用 rpay-PayPal 发起 17 元支付，rpay 后台只看到一笔订单。
+
+**根因**：30 秒去重逻辑用 `ice_alipay='rpay'` 匹配，不区分 Stripe/PayPal/支付宝/微信。同金额的不同支付类型订单在 30 秒内被复用为同一笔。
+
+**修复**：
+- `rpay.php`：`_epd_create_page_order('rpay')` 改为 `_epd_create_page_order('rpay_'.$type)`，使 `ice_alipay` 字段存储 `rpay_stripe`/`rpay_paypal`/`rpay_alipay`/`rpay_wxpay`。
+- `pay.erphp.php`：去重条件从 `ice_alipay='rpay'` 改为 `ice_alipay='".$payment."'"`，匹配条件从 `$payment == 'rpay'` 改为 `$payment == 'rpay' || strpos($payment, 'rpay_') === 0`。
+- `notify_url.php`：回调时从数据库查出订单的 `ice_alipay` 值传给 `epd_set_order_success`，而不是硬编码 `'rpay'`。
+
 #### 9.7.2 pay.erphp.php 文件首字节问题
 
 **现象**：`pay.erphp.php` 文件开头有 BOM 或空行，导致 `header()` 调用时报 "headers already sent" 错误。
@@ -1561,6 +1572,14 @@ rpay → erphpdown 回调签名验证（`notify_url.php`/`return_url.php`）：
 #### 9.7.6 rpay API 地址末尾斜杠
 
 **注意**：erphpdown 后台填写的 rpay API 地址**结尾不要加 `/`**。`rpay.php` 中使用 `rtrim($rpay_url, '/') . '/submit.php'` 拼接提交地址，如果末尾多加斜杠虽然会被 rtrim 处理，但部分主题的 JS 代码可能直接拼接 URL 导致问题。
+
+#### 9.7.7 Stripe/PayPal 结账页暴露站点信息
+
+**现象**：Stripe Checkout 和 PayPal 审批页的商品名称显示「独立站名+用户ID」（如 `XXX站订单[admin]`），暴露站点身份和用户信息。
+
+**根因**：erphpdown 创建订单时 `subject` 字段为 `站点名订单[用户名]`，rpay 原样传给 Stripe/PayPal 作为商品名称。
+
+**修复**：rpay `web.rs` 新增 `external_checkout_name()` 函数，对 Stripe 和 PayPal 的结账请求统一替换商品名称为固定字符串 `"Source Code"`。rpay 数据库和后台仍保留 WordPress 传入的原始商品名称用于内部对账，订单号通过 `client_reference_id`（Stripe）/ `reference_id`（PayPal）传递。
 
 ### 9.8 支付流程图
 
