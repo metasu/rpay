@@ -14,6 +14,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Block embedded credentials
         shell: python
@@ -66,12 +68,17 @@ jobs:
           tar -C dist -czf "dist/$package.tar.gz" "$package"
           sha256sum "dist/$package.tar.gz" > "dist/$package.tar.gz.sha256"
 
-      - name: Tag
+      - name: Ensure tag
         run: |
-          git config user.name github-actions[bot]
-          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git tag -a v0.1.0 -m "rpay v0.1.0"
-          git push origin v0.1.0
+          git fetch --tags --force
+          if git rev-parse -q --verify refs/tags/v0.1.0 >/dev/null; then
+            test "$(git rev-list -n 1 v0.1.0)" = "$GITHUB_SHA"
+          else
+            git config user.name github-actions[bot]
+            git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+            git tag -a v0.1.0 -m "rpay v0.1.0"
+            git push origin v0.1.0
+          fi
 
       - name: Publish
         env:
