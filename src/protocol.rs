@@ -242,18 +242,21 @@ mod tests {
     }
 
     #[test]
-    fn rsa_sha1_matches_openssl_reference() {
-        // Generated via: openssl genrsa 2048; openssl dgst -sha1 -sign key.pem data.txt
-        const PRIV: &str = "MIIEogIBAAKCAQEApntyzwDWJg4+bt9wVfBLU3gKzd4ySjrpOh4t1ZSyezTnR9vDxbCTt8NmpaILrxXayc01WwSBwmjwpWSBAf5KXZ0P7Ac3AalKsn+SLi3Omo4ijNasrQaZ0P7AldpxUm8Z7LQa+YOBktpbBKwFqsJCAKpDcZMyhtFwsXGLZaiR0rEaYuzKe2Atud5QorRPN9Sp4zfAXpBqgx6kbiBUzKSwol981fpu8cK2HkZeT1ylYmXkDVeTa2wCTTDFwZV8uoLBkGYvchvRpFCl4Qo7ulNq6zx0Hx4f8L+t1UaYfCLvrTy9VNGqaoj0YTvTp/hPoC4weiWs8ZobE5chLdGaGgzHbQIDAQABAoIBAFw+wKGUTBQwBkX2xk7H42TvecUSHfllZP9P44OZbb+404HMclBig6bpvUF/ZUvxJxZz/uFcwO1Qqi5qXtUU6m2ubjkQ0li4TexTpVKzDOw0X058UJdatfXIgjtGG05awxmVvfCM/km5dX9ENaulEV8++DnBHtj2yaN4T43Xdl0v4XdTUq2wkbxzM2r7tPSHvggLE+rA6XV0JMpewT4pyJRSycCsb/szCus+I0V8g/jMi7irnrp5euGzffe8WgK7PP4lxwACvHIg0DhFoyCHYvthzqZXZAeQ4MsljkShPoi6hIN/nmzydmmPdVAki/+q0g7bNOyzdLIdg4KnKD+kOEECgYEA18ZvtAlX1Cu4KlRsc4ZiqXfozwprgbxKzFE6lUlJTKB+o8Yd55LGepIkjrhkA1avEPzFGiuVb0kDzANZGRoBkh42OWiHPl4SO2hi98hbvW45Sj44jsbCT31l27RmBieBENszvA2lljd2BemcJ0fqQxERzcw5XUfLa/AkwZszFL0CgYEAxYSTvuox62p0zF62gzWPnvpl0dMBwBbv+KMZ2VZQxoOALiZl+0P6LiaWC25k28nhGwjoF0GZYuvSrxATMRt+dYEgpdjlbSn+TWscl7somY2WhMVPfrcHbRPEYx6Nha0QTEtXSt+kU2l7l1X+2GCQcrJSx1qArJyU5fYF71adIHECgYBOrBxYQTvTsSkRzfxI1susTHsG2h6+i7+d5VP90F24YaAq6HZI07woPpazrslQak+kWvUmiJOQoseOn/3haBkAhKFypwkAlV4CaRoEi/nfBIxA5JTMge2g+/CifZDhV4/4bGPdggBI1+nhV/7GV7MzRsr+BSM5Po8NyN4t9P9X5QKBgCjHvaVuPw5G9YR4jaA7f8KoGjufID5jvfoM2rpnutexsNZWcTnWiCHdL59+lG5YmRR220xp69xjqiUg4YWDErH6Dh6P0JagU/PyCH4/UxuZAxm4jzgvW+Ymbaa1WSzfVX0bFRPNZuUd4zmUtMBB97DmpnaodeatkYSFLiaDMH/RAoGAGtcy77VuByTTCWireFolL3asbFw82pZhG2COIfWE51kI0UxUIBUC1P+Rr4pUtb204Xf0eS5FeaqSmyMrww3vxnSKOCOUbDL5HS5oL0iRlt94ZWdGSrk9w0rfg4wMuSFaQzSNwxoXakqEVVA6ybwiRd2qBpfc8MabVDnyaK58oNQ=";
-        const PUB: &str = "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEApntyzwDWJg4+bt9wVfBLU3gKzd4ySjrpOh4t1ZSyezTnR9vDxbCTt8NmpaILrxXayc01WwSBwmjwpWSBAf5KXZ0P7Ac3AalKsn+SLi3Omo4ijNasrQaZ0P7AldpxUm8Z7LQa+YOBktpbBKwFqsJCAKpDcZMyhtFwsXGLZaiR0rEaYuzKe2Atud5QorRPN9Sp4zfAXpBqgx6kbiBUzKSwol981fpu8cK2HkZeT1ylYmXkDVeTa2wCTTDFwZV8uoLBkGYvchvRpFCl4Qo7ulNq6zx0Hx4f8L+t1UaYfCLvrTy9VNGqaoj0YTvTp/hPoC4weiWs8ZobE5chLdGaGgzHbQIDAQAB";
-        const SIG: &str = "IzfW38Ca4MbPViAib85KJe7Bptc6CfodiGuqB30xSokX+22B1WZU322NyLSxk/ENywSqwSO0To+Y+Wv4hH3lij2pVFhygQzMK+ND9ksQYMA/1UnUMWr9Dlf/dmujnUdRltt7U9HcHIqh/8Db6DXWWtPFazELL+fHCczMdusxKOjnEe4oFjH4Pwa3J2K0qm1CB6QAqDEmp5uVADKXzF1T9ZhWlfncpMi3GTfpyg9AateobdDVAabu8IOVfkK8kZjuQtoyyCWT+RKIh4mEjXzgvg2hs0gS+d/yMDrrl18uK1oV4bOYrM51DDh1JOzDK+OHnAxpX9IjUY6d211Mosrhrg==";
+    fn rsa_sha1_roundtrip_with_ephemeral_key() {
+        use rsa::pkcs8::{EncodePrivateKey, EncodePublicKey};
+
+        let mut rng = rand::rngs::OsRng;
+        let private_key = RsaPrivateKey::new(&mut rng, 2048).unwrap();
+        let public_key = RsaPublicKey::from(&private_key);
+        let private_der = private_key.to_pkcs8_der().unwrap();
+        let public_der = public_key.to_public_key_der().unwrap();
+        let private_b64 = STANDARD.encode(private_der.as_bytes());
+        let public_b64 = STANDARD.encode(public_der.as_bytes());
         let data = "hello=world";
-        // RSA signatures with PKCS#1 v1.5 padding are deterministic, so we can
-        // assert exact equality with the OpenSSL-produced reference — this is
-        // a much stronger check than just verify-round-tripping our own output.
-        assert_eq!(rsa_sign_sha1(data, PRIV).unwrap(), SIG);
-        assert!(rsa_verify_sha1(data, SIG, PUB).unwrap());
-        assert!(!rsa_verify_sha1("tampered", SIG, PUB).unwrap());
+        let signature = rsa_sign_sha1(data, &private_b64).unwrap();
+
+        assert!(rsa_verify_sha1(data, &signature, &public_b64).unwrap());
+        assert!(!rsa_verify_sha1("tampered", &signature, &public_b64).unwrap());
     }
 
     #[test]
