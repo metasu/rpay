@@ -1,0 +1,155 @@
+name: Publish v0.1.0
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: [.github/workflows/release-v0.1.0.yml]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: publish-v0.1.0
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Sanitize static key fixtures
+        shell: python
+        run: |
+          from pathlib import Path
+          import re
+
+          path = Path("src/protocol.rs")
+          text = path.read_text()
+          replacement = r'''    #[test]
+              fn rsa_sha1_roundtrip_with_ephemeral_key() {
+                  use rsa::pkcs8::{EncodePrivateKey, EncodePublicKey};
+
+                  let mut rng = rand::rngs::OsRng;
+                  let private_key = RsaPrivateKey::new(&mut rng, 2048).unwrap();
+                  let public_key = RsaPublicKey::from(&private_key);
+                  let private_der = private_key.to_pkcs8_der().unwrap();
+                  let public_der = public_key.to_public_key_der().unwrap();
+                  let private_b64 = STANDARD.encode(private_der.as_bytes());
+                  let public_b64 = STANDARD.encode(public_der.as_bytes());
+                  let data = "hello=world";
+                  let signature = rsa_sign_sha1(data, &private_b64).unwrap();
+
+                  assert!(rsa_verify_sha1(data, &signature, &public_b64).unwrap());
+                  assert!(!rsa_verify_sha1("tampered", &signature, &public_b64).unwrap());
+              }
+
+              #[test]
+              fn yuan_fen_roundtrip()'''
+          pattern = r'    #\[test\]\n    fn rsa_sha1_matches_openssl_reference\(\) \{.*?\n    #\[test\]\n    fn yuan_fen_roundtrip\(\)'
+          updated, count = re.subn(pattern, replacement, text, count=1, flags=re.S)
+          if count != 1:
+              raise SystemExit("expected static RSA fixture test was not found exactly once")
+          path.write_text(updated)
+
+          Path("tests/alipay_keys.rs").write_text(r'''use base64::{engine::general_purpose::STANDARD, Engine};
+          use rsa::{
+              pkcs8::{EncodePrivateKey, EncodePublicKey},
+              RsaPrivateKey, RsaPublicKey,
+          };
+
+          #[test]
+          fn ephemeral_alipay_style_keys_sign_and_verify() {
+              let mut rng = rand::rngs::OsRng;
+              let private_key = RsaPrivateKey::new(&mut rng, 2048).unwrap();
+              let public_key = RsaPublicKey::from(&private_key);
+              let private_der = private_key.to_pkcs8_der().unwrap();
+              let public_der = public_key.to_public_key_der().unwrap();
+              let private_b64 = STANDARD.encode(private_der.as_bytes());
+              let public_b64 = STANDARD.encode(public_der.as_bytes());
+              let data = "out_trade_no=TEST123&total_amount=1.00";
+
+              let signature = rpay::protocol::rsa_sign_sha256(data, &private_b64).unwrap();
+              assert!(rpay::protocol::rsa_verify_sha256(data, &signature, &public_b64).unwrap());
+              assert!(!rpay::protocol::rsa_verify_sha256("tampered", &signature, &public_b64).unwrap());
+          }
+          ''')
+
+      - name: Scan release tree for embedded secrets
+        shell: python
+        run: |
+          from pathlib import Path
+          import re
+          import subprocess
+
+          files = subprocess.check_output(["git", "ls-files", "-z"]).split(b"\0")
+          findings = []
+          provider = re.compile(rb'(?:sk_(?:live|test)|whsec)_[A-Za-z0-9]{16,}')
+          private_blob = re.compile(rb'"[A-Za-z0-9+/]{800,}={0,2}"')
+          database_url = re.compile(rb'mysql://[^\s:@/]+:([^\s@/]+)@')
+          placeholders = {b'YOUR_PASSWORD', '你的数据库密码'.encode(), '密码'.encode()}
+
+          for raw in files:
+              if not raw:
+                  continue
+              path = Path(raw.decode())
+              data = path.read_bytes()
+              if provider.search(data):
+                  findings.append(f"{path}: provider credential-shaped value")
+              if private_blob.search(data):
+                  findings.append(f"{path}: long embedded Base64 private material")
+              for match in database_url.finditer(data):
+                  if match.group(1) not in placeholders:
+                      findings.append(f"{path}: database URL with non-placeholder password")
+
+          if findings:
+              print("Release blocked by credential scan:")
+              print("\n".join(sorted(set(findings))))
+              raise SystemExit(1)
+          print("Credential scan passed; only placeholders/empty examples remain.")
+
+      - name: Commit sanitized release source
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add src/protocol.rs tests/alipay_keys.rs
+          git commit -m "security: remove embedded private-key fixtures for v0.1.0"
+          git push origin HEAD:main
+
+      - name: Verify
+        run: cargo test --locked
+
+      - name: Build release binary
+        run: cargo build --release --locked
+
+      - name: Package sanitized release
+        run: |
+          package=rpay-v0.1.0-linux-x86_64
+          mkdir -p "dist/$package/bin" "dist/$package/config" "dist/$package/database" "dist/$package/secrets"
+          install -m 0755 target/release/rpay "dist/$package/bin/rpay"
+          install -m 0644 README.md DEPLOY.md "dist/$package/"
+          install -m 0644 config/config.example.toml "dist/$package/config/"
+          install -m 0644 database/schema.sql database/seed.sql "dist/$package/database/"
+          install -m 0644 secrets/database-url.example "dist/$package/secrets/"
+          tar -C dist -czf "dist/$package.tar.gz" "$package"
+          sha256sum "dist/$package.tar.gz" > "dist/$package.tar.gz.sha256"
+
+      - name: Tag sanitized commit
+        run: |
+          test -z "$(git tag -l v0.1.0)"
+          git tag -a v0.1.0 -m "rpay v0.1.0"
+          git push origin v0.1.0
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create v0.1.0 \
+            dist/rpay-v0.1.0-linux-x86_64.tar.gz \
+            dist/rpay-v0.1.0-linux-x86_64.tar.gz.sha256 \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "rpay v0.1.0" \
+            --notes "First versioned rpay release. Includes Alipay, WeChat Pay V2/V3, PayPal and Stripe integrations; EasyPay-compatible merchant submission; admin and merchant portals; Stripe Card + Alipay Checkout; and privacy-minimized Stripe/PayPal checkout names.\n\nSecurity: release sources and assets contain no production database URL, administrator credential, merchant key, provider secret, webhook secret, or static private-key fixture. Provider examples are empty or explicit placeholders and channels are disabled by default.\n\nAsset: Linux x86_64 binary package with deployment documentation, schema, non-sensitive seed data, and example configuration. Verify the archive with the attached SHA-256 file."
