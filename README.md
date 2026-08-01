@@ -104,12 +104,8 @@ cd rpay
 # 2. Initialize the database (imports 29 tables + seed, generates admin credentials)
 DB_PASS=your_mysql_password ./scripts/init-db.sh
 
-# 3. Create the database URL file
-echo -n "mysql://rpay:your_password@127.0.0.1:3306/rpay" > /opt/services/rpay/secrets/database-url
-chmod 600 /opt/services/rpay/secrets/database-url
-
-# 4. Deploy (builds, installs binary, creates systemd service, starts)
-PUBLIC_URL=https://pay.example.com ./scripts/deploy.sh
+# 3. Deploy (builds, installs binary, creates systemd service, starts)
+PUBLIC_URL=https://pay.example.com DB_URL=mysql://rpay:your_password@127.0.0.1:3306/rpay ./scripts/deploy.sh
 
 # Or do it manually:
 cargo build --release
@@ -300,12 +296,8 @@ cd rpay
 # 2. 初始化数据库（导入 29 张表 + 种子数据，自动生成管理员密码）
 DB_PASS=你的数据库密码 ./scripts/init-db.sh
 
-# 3. 创建数据库连接文件
-echo -n "mysql://rpay:你的密码@127.0.0.1:3306/rpay" > /opt/services/rpay/secrets/database-url
-chmod 600 /opt/services/rpay/secrets/database-url
-
-# 4. 一键部署（编译、安装二进制、创建 systemd 服务、启动）
-PUBLIC_URL=https://你的域名 ./scripts/deploy.sh
+# 3. 一键部署（编译、安装二进制、创建 systemd 服务、启动）
+PUBLIC_URL=https://你的域名 DB_URL=mysql://rpay:你的密码@127.0.0.1:3306/rpay ./scripts/deploy.sh
 
 # 或手动方式：
 cargo build --release
