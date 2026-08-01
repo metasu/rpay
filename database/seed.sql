@@ -50,14 +50,14 @@ INSERT INTO `pay_channel`
   (`id`, `mode`, `type`, `plugin`, `name`, `rate`, `status`, `config`, `paymin`, `paymax`, `daymaxorder`) VALUES
   (1, 0, 1, 'alipay', '支付宝', 100.00, 0,
    '{"appid":"","appkey":"","appsecret":"","sign_type":"RSA2"}', '0.01', NULL, 0),
-  (2, 0, 2, 'wxpay', '微信支付 V2', 100.00, 0,
+  (2, 0, 4, 'stripe', 'Stripe', 100.00, 0,
+   '{"appsecret":"","appkey":"","currency":"eur","currency_rate":7.8,"payment_method_types":["card","alipay"]}', '5.00', NULL, 0),
+  (3, 0, 3, 'paypal', 'PayPal', 100.00, 0,
+   '{"appid":"","appsecret":"","appkey":"","currency":"GBP","currency_rate":9.2,"sandbox":true}', '1.00', NULL, 0),
+  (4, 0, 2, 'wxpay', '微信官方支付(V2)', 100.00, 0,
    '{"appid":"","appmchid":"","appkey":""}', '0.01', NULL, 0),
-  (3, 0, 2, 'wxpayn', '微信支付 V3', 100.00, 0,
-   '{"appid":"","appmchid":"","appkey":"","appsecret":"","platform_public_key":""}', '0.01', NULL, 0),
-  (4, 0, 3, 'paypal', 'PayPal', 100.00, 0,
-   '{"appid":"","appsecret":"","appkey":"","currency":"usd","currency_rate":7.2,"sandbox":true}', '1.00', NULL, 0),
-  (5, 0, 4, 'stripe', 'Stripe', 100.00, 0,
-   '{"appsecret":"","appkey":"","currency":"usd","currency_rate":7.2,"payment_method_types":["card","alipay"]}', '5.00', NULL, 0)
+  (5, 0, 2, 'wxpayn', '微信官方支付(V3)', 100.00, 0,
+   '{"appid":"","appmchid":"","appkey":"","appsecret":"","platform_public_key":""}', '0.01', NULL, 0)
 ON DUPLICATE KEY UPDATE
   `type`=VALUES(`type`),
   `plugin`=VALUES(`plugin`),

@@ -164,6 +164,18 @@ Supported WordPress payment types:
 | `stripe` | 143 | Stripe |
 | `paypal` | 144 | PayPal |
 
+#### Channel defaults
+
+| Channel | Plugin | Default currency | Min amount | Notes |
+|---------|--------|-----------------|------------|-------|
+| Alipay | `alipay` | CNY | ¥0.01 | Domestic RMB |
+| Stripe | `stripe` | EUR (€) | ¥5.00 | `currency_rate` converts CNY→EUR |
+| PayPal | `paypal` | GBP (£) | ¥1.00 | `currency_rate` converts CNY→GBP |
+| WeChat Pay V2 | `wxpay` | CNY | ¥0.01 | Disabled by default |
+| WeChat Pay V3 | `wxpayn` | CNY | ¥0.01 | Disabled by default |
+
+> Currency and rate are configured per-channel in the admin UI. The `currency_rate` field divides the CNY amount to convert to the target currency (e.g. 7.8 for CNY→EUR, 9.2 for CNY→GBP).
+
 The WordPress adapter signs merchant requests with MD5, passes the selected payment type explicitly, and verifies rpay callbacks before marking the WordPress order as paid. The integration also contains a short duplicate-submission window and keeps different payment types from being incorrectly merged.
 
 See the WordPress section in [`DEPLOY.md`](DEPLOY.md) for file lists, configuration, payment-type mapping, callback setup, and troubleshooting.
@@ -355,6 +367,18 @@ cargo build --release
 | `wxpay` | 142 | 微信支付 |
 | `stripe` | 143 | Stripe |
 | `paypal` | 144 | PayPal |
+
+#### 渠道默认配置
+
+| 渠道 | 插件 | 默认币种 | 最小金额 | 说明 |
+|------|------|---------|---------|------|
+| 支付宝 | `alipay` | CNY | ¥0.01 | 人民币 |
+| Stripe | `stripe` | EUR (€) | ¥5.00 | `currency_rate` 将 CNY 换算为欧元 |
+| PayPal | `paypal` | GBP (£) | ¥1.00 | `currency_rate` 将 CNY 换算为英镑 |
+| 微信支付 V2 | `wxpay` | CNY | ¥0.01 | 默认停用 |
+| 微信支付 V3 | `wxpayn` | CNY | ¥0.01 | 默认停用 |
+
+> 币种和汇率在管理后台 → 渠道配置中按渠道设置。`currency_rate` 字段用于将人民币金额除以汇率换算为目标币种（如 CNY→EUR 用 7.8，CNY→GBP 用 9.2）。
 
 WordPress 适配层使用 MD5 对商户请求签名，并显式传递支付类型；收到 rpay 回调后先验签，再将 WordPress 订单标记为已支付。适配层还包含短时间重复提交折叠机制，并避免把不同支付类型的订单错误合并。
 
