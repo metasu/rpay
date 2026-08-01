@@ -550,10 +550,11 @@ impl Store {
     }
 
     pub async fn expire_pending_orders(&self, minutes: i64) -> Result<u64, StoreError> {
+        let cutoff = chrono::Local::now().naive_local() - chrono::Duration::minutes(minutes);
         let result = sqlx::query(
-            "UPDATE pay_order SET status=2 WHERE status=0 AND addtime < DATE_SUB(NOW(), INTERVAL ? MINUTE)",
+            "UPDATE pay_order SET status=2 WHERE status=0 AND addtime < ?",
         )
-        .bind(minutes)
+        .bind(cutoff)
         .execute(&self.pool)
         .await?;
         Ok(result.rows_affected())

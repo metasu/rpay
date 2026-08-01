@@ -643,10 +643,20 @@ pub async fn retry_pending_notifications(state: AppState) {
 }
 
 pub async fn expire_pending_orders(state: AppState) {
+    tracing::info!("expire_pending_orders task started");
     let mut interval = tokio::time::interval(std::time::Duration::from_secs(180));
     loop {
         interval.tick().await;
-        let _ = state.store.expire_pending_orders(30).await;
+        match state.store.expire_pending_orders(30).await {
+            Ok(n) => {
+                if n > 0 {
+                    tracing::info!("expire_pending_orders: expired {} orders", n);
+                }
+            }
+            Err(e) => {
+                tracing::error!("expire_pending_orders error: {e}");
+            }
+        }
     }
 }
 

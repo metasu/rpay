@@ -45,8 +45,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         session: SessionCodec::new(syskey.into_bytes()),
     };
 
-    tokio::spawn(retry_pending_notifications(state.clone()));
-    tokio::spawn(expire_pending_orders(state.clone()));
+    tokio::spawn(task_monitor("retry_pending_notifications", retry_pending_notifications(state.clone())));
+    tokio::spawn(task_monitor("expire_pending_orders", expire_pending_orders(state.clone())));
 
     let router = app(state);
     let listener = tokio::net::TcpListener::bind(cli.listen).await?;
@@ -59,4 +59,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 async fn shutdown_signal() {
     let _ = tokio::signal::ctrl_c().await;
+}
+
+async fn task_monitor<F>(name: &'static str, fut: F)
+where
+    F: std::future::Future<Output = ()> + Send + 'static,
+{
+    let handle = tokio::spawn(fut);
+    if let Err(e) = handle.await {
+        tracing::error!("task {name} panicked: {e}");
+    }
 }
