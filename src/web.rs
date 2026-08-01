@@ -202,6 +202,22 @@ async fn submit(State(state): State<AppState>, headers: HeaderMap, body: Bytes) 
         Err(_) => return text_response(StatusCode::SERVICE_UNAVAILABLE, "当前支付方式暂不可用"),
     };
 
+    // Enforce per-channel min/max order amount
+    if let Some(ref min) = channel.paymin {
+        if let Some(min_fen) = protocol::parse_yuan_to_fen(min) {
+            if fen < min_fen {
+                return text_response(StatusCode::BAD_REQUEST, &format!("订单金额不能低于 {min} 元"));
+            }
+        }
+    }
+    if let Some(ref max) = channel.paymax {
+        if let Some(max_fen) = protocol::parse_yuan_to_fen(max) {
+            if fen > max_fen {
+                return text_response(StatusCode::BAD_REQUEST, &format!("订单金额不能超过 {max} 元"));
+            }
+        }
+    }
+
     let _ = state
         .store
         .set_channel(&trade_no, channel.type_id, channel.id, &money)

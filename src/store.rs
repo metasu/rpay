@@ -90,7 +90,7 @@ impl Store {
                 .await?;
         let type_id = type_id.ok_or(StoreError::NotFound)?;
         let row = sqlx::query(
-            "SELECT id,name,plugin,type,status,CAST(rate AS CHAR) AS rate,config FROM pay_channel WHERE type=? AND status=1 ORDER BY id LIMIT 1",
+            "SELECT id,name,plugin,type,status,CAST(rate AS CHAR) AS rate,paymin,paymax,config FROM pay_channel WHERE type=? AND status=1 ORDER BY id LIMIT 1",
         )
         .bind(type_id)
         .fetch_optional(&self.pool)
@@ -104,6 +104,8 @@ impl Store {
             type_name: Some(type_name.to_string()),
             status: row.try_get("status")?,
             rate: row.try_get("rate")?,
+            paymin: row.try_get("paymin")?,
+            paymax: row.try_get("paymax")?,
             config: row.try_get("config")?,
         })
     }
@@ -329,11 +331,61 @@ impl Store {
         )
         .fetch_one(&self.pool)
         .await?;
+        let paid_count_month: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM pay_order WHERE status=1 AND date>=DATE_FORMAT(CURDATE(),'%Y-%m-01')",
+        )
+        .fetch_one(&self.pool)
+        .await?;
+        let paid_amount_month: String = sqlx::query_scalar(
+            "SELECT COALESCE(CAST(SUM(money) AS CHAR),'0.00') FROM pay_order WHERE status=1 AND date>=DATE_FORMAT(CURDATE(),'%Y-%m-01')",
+        )
+        .fetch_one(&self.pool)
+        .await?;
+        let paid_count_year: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM pay_order WHERE status=1 AND date>=DATE_FORMAT(CURDATE(),'%Y-01-01')",
+        )
+        .fetch_one(&self.pool)
+        .await?;
+        let paid_amount_year: String = sqlx::query_scalar(
+            "SELECT COALESCE(CAST(SUM(money) AS CHAR),'0.00') FROM pay_order WHERE status=1 AND date>=DATE_FORMAT(CURDATE(),'%Y-01-01')",
+        )
+        .fetch_one(&self.pool)
+        .await?;
+        let paid_count_last_year: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM pay_order WHERE status=1 AND date>=DATE_FORMAT(DATE_SUB(CURDATE(), INTERVAL 1 YEAR),'%Y-01-01') AND date<DATE_FORMAT(CURDATE(),'%Y-01-01')",
+        )
+        .fetch_one(&self.pool)
+        .await?;
+        let paid_amount_last_year: String = sqlx::query_scalar(
+            "SELECT COALESCE(CAST(SUM(money) AS CHAR),'0.00') FROM pay_order WHERE status=1 AND date>=DATE_FORMAT(DATE_SUB(CURDATE(), INTERVAL 1 YEAR),'%Y-01-01') AND date<DATE_FORMAT(CURDATE(),'%Y-01-01')",
+        )
+        .fetch_one(&self.pool)
+        .await?;
+        let monthly_rows = sqlx::query(
+            "SELECT DATE_FORMAT(date,'%Y-%m') AS m, COUNT(*) AS c, COALESCE(CAST(SUM(money) AS CHAR),'0.00') AS a FROM pay_order WHERE status=1 AND date>=DATE_FORMAT(CURDATE(),'%Y-01-01') GROUP BY DATE_FORMAT(date,'%Y-%m') ORDER BY m",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        let monthly_stats = monthly_rows
+            .into_iter()
+            .map(|row| Ok(MonthlyStatsRow {
+                month: row.try_get("m")?,
+                count: row.try_get("c")?,
+                amount: row.try_get("a")?,
+            }))
+            .collect::<Result<Vec<_>, StoreError>>()?;
         Ok(DashboardStats {
             merchant_count,
             order_count,
             paid_count_today,
             paid_amount_today,
+            paid_count_month,
+            paid_amount_month,
+            paid_count_year,
+            paid_amount_year,
+            paid_count_last_year,
+            paid_amount_last_year,
+            monthly_stats,
         })
     }
 
@@ -793,7 +845,7 @@ impl Store {
         if channel_filter.is_some() { conds.push(if channel_exclude { "(c.plugin<>? AND c.name<>?)" } else { "(c.plugin=? OR c.name=?)" }); }
         let cond = if conds.is_empty() { String::new() } else { format!("WHERE {}", conds.join(" AND ")) };
         let sql = format!(
-            "SELECT COUNT(*) AS total,CAST(SUM(CASE WHEN o.status=1 THEN 1 ELSE 0 END) AS SIGNED) AS paid,CAST(SUM(CASE WHEN o.status=0 THEN 1 ELSE 0 END) AS SIGNED) AS unpaid,COALESCE(CAST(SUM(o.money) AS CHAR),'0.00') AS total_amount,COALESCE(CAST(SUM(CASE WHEN o.status=1 THEN o.money ELSE 0 END) AS CHAR),'0.00') AS paid_amount,COALESCE(CAST(SUM(CASE WHEN o.status=1 THEN COALESCE(o.profitmoney,0) ELSE 0 END) AS CHAR),'0.00') AS profit_amount FROM pay_order o LEFT JOIN pay_channel c ON c.id=o.channel {cond}"
+            "SELECT COUNT(*) AS total,CAST(SUM(CASE WHEN o.status=1 THEN 1 ELSE 0 END) AS SIGNED) AS paid,CAST(SUM(CASE WHEN o.status=0 THEN 1 ELSE 0 END) AS SIGNED) AS unpaid,CAST(SUM(CASE WHEN o.status=2 THEN 1 ELSE 0 END) AS SIGNED) AS closed,CAST(SUM(CASE WHEN o.status=3 THEN 1 ELSE 0 END) AS SIGNED) AS refunded,COALESCE(CAST(SUM(o.money) AS CHAR),'0.00') AS total_amount,COALESCE(CAST(SUM(CASE WHEN o.status=1 THEN o.money ELSE 0 END) AS CHAR),'0.00') AS paid_amount,COALESCE(CAST(SUM(CASE WHEN o.status=1 THEN COALESCE(o.profitmoney,0) ELSE 0 END) AS CHAR),'0.00') AS profit_amount FROM pay_order o LEFT JOIN pay_channel c ON c.id=o.channel {cond}"
         );
         let mut query = sqlx::query(&sql);
         if let Some(u) = uid { query = query.bind(u); }
@@ -806,6 +858,8 @@ impl Store {
             total_count: row.try_get("total")?,
             paid_count: row.try_get("paid")?,
             unpaid_count: row.try_get("unpaid")?,
+            closed_count: row.try_get("closed")?,
+            refunded_count: row.try_get("refunded")?,
             total_amount: row.try_get("total_amount")?,
             paid_amount: row.try_get("paid_amount")?,
             profit_amount: row.try_get("profit_amount")?,
@@ -837,7 +891,7 @@ impl Store {
 
     pub async fn list_channels_full(&self) -> Result<Vec<ChannelFullRow>, StoreError> {
         let rows = sqlx::query(
-            "SELECT A.id,A.name,A.plugin,A.type,A.status,CAST(A.rate AS CHAR) AS rate,A.config,B.name AS type_name FROM pay_channel A LEFT JOIN pay_type B ON A.type=B.id ORDER BY A.id",
+            "SELECT A.id,A.name,A.plugin,A.type,A.status,CAST(A.rate AS CHAR) AS rate,A.paymin,A.paymax,A.config,B.name AS type_name FROM pay_channel A LEFT JOIN pay_type B ON A.type=B.id ORDER BY A.id",
         )
         .fetch_all(&self.pool)
         .await?;
@@ -851,6 +905,8 @@ impl Store {
                     type_name: row.try_get("type_name")?,
                     status: row.try_get("status")?,
                     rate: row.try_get("rate")?,
+                    paymin: row.try_get("paymin")?,
+                    paymax: row.try_get("paymax")?,
                     config: row.try_get("config")?,
                 })
             })
@@ -859,7 +915,7 @@ impl Store {
 
     pub async fn channel_detail(&self, id: u64) -> Result<ChannelFullRow, StoreError> {
         let row = sqlx::query(
-            "SELECT A.id,A.name,A.plugin,A.type,A.status,CAST(A.rate AS CHAR) AS rate,A.config,B.name AS type_name FROM pay_channel A LEFT JOIN pay_type B ON A.type=B.id WHERE A.id=? LIMIT 1",
+            "SELECT A.id,A.name,A.plugin,A.type,A.status,CAST(A.rate AS CHAR) AS rate,A.paymin,A.paymax,A.config,B.name AS type_name FROM pay_channel A LEFT JOIN pay_type B ON A.type=B.id WHERE A.id=? LIMIT 1",
         )
         .bind(id)
         .fetch_optional(&self.pool)
@@ -873,6 +929,8 @@ impl Store {
             type_name: row.try_get("type_name")?,
             status: row.try_get("status")?,
             rate: row.try_get("rate")?,
+            paymin: row.try_get("paymin")?,
+            paymax: row.try_get("paymax")?,
             config: row.try_get("config")?,
         })
     }
@@ -882,11 +940,15 @@ impl Store {
         id: u64,
         status: i8,
         rate: &str,
+        paymin: Option<&str>,
+        paymax: Option<&str>,
         config: &str,
     ) -> Result<(), StoreError> {
-        sqlx::query("UPDATE pay_channel SET status=?,rate=?,config=? WHERE id=?")
+        sqlx::query("UPDATE pay_channel SET status=?,rate=?,paymin=?,paymax=?,config=? WHERE id=?")
             .bind(status)
             .bind(rate)
+            .bind(paymin)
+            .bind(paymax)
             .bind(config)
             .bind(id)
             .execute(&self.pool)
@@ -910,6 +972,20 @@ pub struct DashboardStats {
     pub order_count: i64,
     pub paid_count_today: i64,
     pub paid_amount_today: String,
+    pub paid_count_month: i64,
+    pub paid_amount_month: String,
+    pub paid_count_year: i64,
+    pub paid_amount_year: String,
+    pub paid_count_last_year: i64,
+    pub paid_amount_last_year: String,
+    pub monthly_stats: Vec<MonthlyStatsRow>,
+}
+
+#[derive(Clone, Debug)]
+pub struct MonthlyStatsRow {
+    pub month: String,
+    pub count: i64,
+    pub amount: String,
 }
 
 #[derive(Clone, Debug)]
@@ -997,6 +1073,8 @@ pub struct OrderStatsRow {
     pub total_count: i64,
     pub paid_count: i64,
     pub unpaid_count: i64,
+    pub closed_count: i64,
+    pub refunded_count: i64,
     pub total_amount: String,
     pub paid_amount: String,
     pub profit_amount: String,
@@ -1018,6 +1096,8 @@ pub struct ChannelFullRow {
     pub type_name: Option<String>,
     pub status: i8,
     pub rate: String,
+    pub paymin: Option<String>,
+    pub paymax: Option<String>,
     pub config: Option<String>,
 }
 

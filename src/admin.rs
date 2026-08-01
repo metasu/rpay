@@ -120,6 +120,16 @@ async fn dashboard(State(state): State<AppState>, jar: CookieJar) -> Response {
         Ok(s) => s,
         Err(_) => return server_error(),
     };
+    let mut monthly_table = String::from("<table><tr><th>月份</th><th>成交笔数</th><th>成交金额</th></tr>");
+    for m in &stats.monthly_stats {
+        monthly_table.push_str(&format!(
+            "<tr><td>{month}</td><td>{count}</td><td>¥{amount}</td></tr>",
+            month = escape(&m.month),
+            count = m.count,
+            amount = escape(&m.amount),
+        ));
+    }
+    monthly_table.push_str("</table>");
     let body = format!(
         r#"<h1>概览</h1>
 <div class="grid">
@@ -127,11 +137,26 @@ async fn dashboard(State(state): State<AppState>, jar: CookieJar) -> Response {
 <div class="stat"><div class="n">{orders}</div><div class="l">订单总数</div></div>
 <div class="stat"><div class="n">{paid_today}</div><div class="l">今日成交笔数</div></div>
 <div class="stat"><div class="n">¥{amount_today}</div><div class="l">今日成交金额</div></div>
-</div>"#,
+<div class="stat"><div class="n">{paid_month}</div><div class="l">本月成交笔数</div></div>
+<div class="stat"><div class="n">¥{amount_month}</div><div class="l">本月成交金额</div></div>
+<div class="stat"><div class="n">{paid_year}</div><div class="l">今年成交笔数</div></div>
+<div class="stat"><div class="n">¥{amount_year}</div><div class="l">今年成交金额</div></div>
+<div class="stat"><div class="n">{paid_last_year}</div><div class="l">去年成交笔数</div></div>
+<div class="stat"><div class="n">¥{amount_last_year}</div><div class="l">去年成交金额</div></div>
+</div>
+<h2 style="margin-top:24px">今年每月成交</h2>
+<div class="card">{monthly_table}</div>"#,
         merchants = stats.merchant_count,
         orders = stats.order_count,
         paid_today = stats.paid_count_today,
         amount_today = escape(&stats.paid_amount_today),
+        paid_month = stats.paid_count_month,
+        amount_month = escape(&stats.paid_amount_month),
+        paid_year = stats.paid_count_year,
+        amount_year = escape(&stats.paid_amount_year),
+        paid_last_year = stats.paid_count_last_year,
+        amount_last_year = escape(&stats.paid_amount_last_year),
+        monthly_table = monthly_table,
     );
     Html(page("概览 - rpay 管理后台", &admin_nav("dashboard"), &body)).into_response()
 }
@@ -507,6 +532,7 @@ async fn orders_list(
 <option value="">全部状态</option>
 <option value="1" {s1}>已支付</option>
 <option value="0" {s0}>待支付</option>
+<option value="2" {s2}>已关闭</option>
 <option value="3" {s3}>已退款</option>
 </select>
 <button class="btn secondary" type="submit">筛选</button>
@@ -527,6 +553,7 @@ async fn orders_list(
         exclude = if exclude_channel { "checked" } else { "" },
         s1 = if status == Some(1) { "selected" } else { "" },
         s0 = if status == Some(0) { "selected" } else { "" },
+        s2 = if status == Some(2) { "selected" } else { "" },
         s3 = if status == Some(3) { "selected" } else { "" },
     );
     Html(page("订单查询 - rpay 管理后台", &admin_nav("orders"), &body)).into_response()
@@ -592,6 +619,8 @@ async fn orders_stats(
 <div class="stat"><div class="n">{total}</div><div class="l">订单总数</div></div>
 <div class="stat"><div class="n">{paid}</div><div class="l">已支付</div></div>
 <div class="stat"><div class="n">{unpaid}</div><div class="l">待支付</div></div>
+<div class="stat"><div class="n">{closed}</div><div class="l">已关闭</div></div>
+<div class="stat"><div class="n">{refunded}</div><div class="l">已退款</div></div>
 <div class="stat"><div class="n">¥{paid_amt}</div><div class="l">已支付金额</div></div>
 <div class="stat"><div class="n">¥{total_amt}</div><div class="l">订单总金额</div></div>
 <div class="stat"><div class="n">¥{profit}</div><div class="l">利润总额</div></div>
@@ -607,6 +636,8 @@ async fn orders_stats(
         total = stats.total_count,
         paid = stats.paid_count,
         unpaid = stats.unpaid_count,
+        closed = stats.closed_count,
+        refunded = stats.refunded_count,
         paid_amt = escape(&stats.paid_amount),
         total_amt = escape(&stats.total_amount),
         profit = escape(&stats.profit_amount),
@@ -919,6 +950,10 @@ async fn render_channel_detail(state: &AppState, id: u64, notice: Option<&str>) 
 </select>
 <label>费率（%，通常 100.00 表示无额外扣费）</label>
 <input name="rate" value="{rate}">
+<label>最小订单金额（元，留空不限制）</label>
+<input name="paymin" value="{paymin}" placeholder="如 0.01">
+<label>最大订单金额（元，留空不限制）</label>
+<input name="paymax" value="{paymax}" placeholder="如 1000">
 <label>渠道配置 JSON（如 appid/appkey/appsecret，字段含义取决于插件：{plugin}）</label>
 <textarea name="config" rows="14" style="width:100%;font-family:monospace;font-size:13px;padding:10px;border:1px solid #e2e6ee;border-radius:6px">{config}</textarea>
 <div style="margin-top:16px"><button class="btn" type="submit">保存</button> <a class="btn secondary" href="/admin/channels">返回列表</a></div>
@@ -929,6 +964,8 @@ async fn render_channel_detail(state: &AppState, id: u64, notice: Option<&str>) 
         on = if c.status == 1 { "selected" } else { "" },
         off = if c.status == 0 { "selected" } else { "" },
         rate = escape(&c.rate),
+        paymin = escape(c.paymin.as_deref().unwrap_or("")),
+        paymax = escape(c.paymax.as_deref().unwrap_or("")),
         plugin = escape(&c.plugin),
         config = escape(&pretty_config),
     );
@@ -939,6 +976,8 @@ async fn render_channel_detail(state: &AppState, id: u64, notice: Option<&str>) 
 struct ChannelUpdateForm {
     status: i8,
     rate: String,
+    paymin: Option<String>,
+    paymax: Option<String>,
     config: String,
 }
 
@@ -956,7 +995,7 @@ async fn channel_update(
     }
     if state
         .store
-        .update_channel(id, form.status, &form.rate, &form.config)
+        .update_channel(id, form.status, &form.rate, form.paymin.as_deref(), form.paymax.as_deref(), &form.config)
         .await
         .is_err()
     {
