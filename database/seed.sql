@@ -19,9 +19,9 @@ ON DUPLICATE KEY UPDATE `v`=VALUES(`v`);
 
 INSERT INTO `pay_type` (`id`, `name`, `device`, `showname`, `status`) VALUES
   (1, 'alipay', 0, '支付宝', 1),
-  (2, 'wxpay',  0, '微信支付', 1),
+  (2, 'stripe', 0, 'Stripe', 1),
   (3, 'paypal', 0, 'PayPal', 1),
-  (4, 'stripe', 0, 'Stripe', 1)
+  (4, 'wxpay',  0, '微信支付', 1)
 ON DUPLICATE KEY UPDATE
   `name`=VALUES(`name`),
   `device`=VALUES(`device`),
@@ -50,13 +50,13 @@ INSERT INTO `pay_channel`
   (`id`, `mode`, `type`, `plugin`, `name`, `rate`, `status`, `config`, `paymin`, `paymax`, `daymaxorder`) VALUES
   (1, 0, 1, 'alipay', '支付宝', 100.00, 0,
    '{"appid":"","appkey":"","appsecret":"","sign_type":"RSA2"}', '0.01', NULL, 0),
-  (2, 0, 4, 'stripe', 'Stripe', 100.00, 0,
+  (2, 0, 2, 'stripe', 'Stripe', 100.00, 0,
    '{"appsecret":"","appkey":"","currency":"eur","currency_rate":7.8,"payment_method_types":["card","alipay"]}', '5.00', NULL, 0),
   (3, 0, 3, 'paypal', 'PayPal', 100.00, 0,
    '{"appid":"","appsecret":"","appkey":"","currency":"GBP","currency_rate":9.2,"sandbox":true}', '1.00', NULL, 0),
-  (4, 0, 2, 'wxpay', '微信官方支付(V2)', 100.00, 0,
+  (4, 0, 4, 'wxpay', '微信官方支付(V2)', 100.00, 0,
    '{"appid":"","appmchid":"","appkey":""}', '0.01', NULL, 0),
-  (5, 0, 2, 'wxpayn', '微信官方支付(V3)', 100.00, 0,
+  (5, 0, 4, 'wxpayn', '微信官方支付(V3)', 100.00, 0,
    '{"appid":"","appmchid":"","appkey":"","appsecret":"","platform_public_key":""}', '0.01', NULL, 0)
 ON DUPLICATE KEY UPDATE
   `type`=VALUES(`type`),
