@@ -134,7 +134,7 @@ default-time-zone = '+08:00'
 
 仓库提供经过 MySQL 实际导入验证的完整初始化文件：
 
-- `database/schema.sql`：29 张 EasyPay 兼容表的完整结构；
+- `database/schema.sql`：29 张 EasyPay 兼容表的完整结构;
 - `database/seed.sql`：支付类型、插件元数据和默认禁用的渠道模板，不含管理员、商户、订单或真实支付密钥。
 
 全新安装直接执行：
@@ -584,8 +584,7 @@ CREATE TABLE IF NOT EXISTS `pay_subchannel` (
   `usetime` datetime DEFAULT NULL,
   `apply_id` int(11) DEFAULT NULL,
   PRIMARY KEY (`id`),
-  KEY `channel` (`channel`),
-  KEY `uid` (`uid`)
+  KEY `channel` (`channel`,`uid`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
 
 -- pay_suborder: 子订单
@@ -1162,7 +1161,7 @@ Rust release 编译内存消耗大，512MB VPS 会 OOM。解决办法：添加 2
 ### 11. 必须导入完整数据库结构
 仅手动创建 `pay_config`/`pay_user`/`pay_order`/`pay_channel` 4 张表是不够的。`pay_type` 表缺失会导致 `/admin/channels` 页面 500 错误（`list_channels_full()` SQL 中 `LEFT JOIN pay_type B ON A.type=B.id`）。全新部署直接导入仓库的 `database/schema.sql` 和 `database/seed.sql`；迁移旧实例时才导入旧服务器的完整 29 表 dump。
 
-### 12. 管理员凭据在数据库中，不在 secrets 文件
+### 12. 管理员凭据在数据库中，不在 secrets file
 rpay 的管理员登录从 `pay_config` 表读取 `admin_user` 和 `admin_pwd`，不是从 `secrets/admin-password` 文件。全新部署时按 3.3 节生成随机 `syskey` 和管理员密码；修改密码也是更新数据库，不是改文件。
 
 ### 13. WordPress 桌面端 rpay 重复下单
@@ -1335,7 +1334,7 @@ PayPal 支持无 PayPal 账户的访客直接用信用卡（Visa/Mastercard 等�
 1. 在 [PayPal Developer Sandbox](https://developer.paypal.com/dashboard/sandbox/accounts) 创建买家测试账号
 2. 将渠道配置切换为沙箱（`sandbox:true`）
 3. 通过 `/submit.php` POST 提交 PayPal 订单，跳转到 PayPal 沙箱页面
-4. 用沙箱买家账号登录完成支付
+4. 用沙箱 buy 账号登录完成支付
 
 #### 实盘测试
 
@@ -1524,7 +1523,7 @@ rpay 通过兼容「易支付协议」与 WordPress erphpdown 插件对接。erp
 2. 填写：
    - **商户ID**：rpay 后台创建商户后获得的 `pid`
    - **商户key**：对应商户的 `key`（用于 MD5 签名）
-   - **API地址**：rpay 服务地址，**结尾不要加 `/`**，例如 `https://pay.example.com`
+   - **APIaddress**：rpay 服务地址，**结尾不要加 `/`**，例如 `https://pay.example.com`
 3. 勾选需要隐藏的支付方式（支付宝/微信/Stripe/PayPal），未勾选的方式将显示给用户
 4. （可选）在「充值支付接口顺序」中填入 `rpay-ali,rpay-wx,rpay-stripe,rpay-paypal` 自定义充值页支付方式排序
 
