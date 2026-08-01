@@ -99,6 +99,37 @@ FLUSH PRIVILEGES;
 SQL
 ```
 
+#### 数据库时间默认设置
+
+项目数据库（包括订单、支付记录、退款、结算和日志等时间字段）默认使用新加坡时间：
+
+- **时区**：`Asia/Singapore`
+- **偏移**：`UTC+08:00`（东八区）
+- **部署约定**：数据库服务和 rpay 数据库连接的会话时区均应保持为 `+08:00`
+
+检查当前 MySQL/MariaDB 时区：
+
+```sql
+SELECT @@global.time_zone AS global_time_zone,
+       @@session.time_zone AS session_time_zone,
+       NOW() AS database_now;
+```
+
+临时调整当前实例和当前连接（重启数据库后可能失效）：
+
+```sql
+SET GLOBAL time_zone = '+08:00';
+SET time_zone = '+08:00';
+```
+
+如需持久化，请在 MySQL/MariaDB 配置文件的 `[mysqld]` 段加入：
+
+```ini
+default-time-zone = '+08:00'
+```
+
+修改后重启数据库服务，并再次执行上面的查询确认。不要将订单时间默认改为 UTC 或其他时区；如需改变默认时区，应同步评估历史订单、回调、对账和日志展示逻辑。
+
 ### 3.3 导入数据库表结构
 
 仓库提供经过 MySQL 实际导入验证的完整初始化文件：
@@ -389,7 +420,7 @@ CREATE TABLE IF NOT EXISTS `pay_invitecode` (
   `uid` int(11) DEFAULT NULL,
   `status` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`),
-  KEY `code` (`code`)
+  KEY `code` (`to`,`type`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
 
 -- pay_log: 日志
@@ -889,7 +920,7 @@ chmod 700 $INSTALL_DIR/secrets
 #### secrets/database-url
 
 ```bash
-echo -n "mysql://pay:你的数据库密码@127.0.0.1:3306/pay" > /opt/services/rpay/secrets/database-url
+echo -n "mysql://pay:***@127.0.0.1:3306/pay" > /opt/services/rpay/secrets/database-url
 chown rpay:rpay /opt/services/rpay/secrets/database-url
 chmod 600 /opt/services/rpay/secrets/database-url
 ```
