@@ -1145,7 +1145,9 @@ Axum 的 `Form` 提取器底层用 `serde_urlencoded`，不支持重复字段（
 下单时传给支付宝的 `out_trade_no` 是我们系统的 `trade_no`，退款时也必须用 `trade_no`。用商户的 `out_trade_no` 退款会报 40004。
 
 ### 7. 待支付订单需要自动过期
-没有自动过期机制时，待支付订单会永久留在数据库。需要后台定时任务将超过 30 分钟未支付的订单标记为已关闭（status=2）。
+没有自动过期机制时，待支付订单会永久留在数据库。后台定时任务每 3 分钟扫描一次，将超过 30 分钟未支付的订单标记为已关闭（status=2）。
+
+**关键修复**：原实现使用 `DATE_SUB(NOW(), INTERVAL ? MINUTE)` 参数化 SQL，在 MySQL 5.6 + SQLx 预处理语句下兼容性不可靠，导致后台任务静默失败。修复方式是在 Rust 侧用 `chrono::Local::now().naive_local() - chrono::Duration::minutes(minutes)` 计算截止时间，SQL 改为 `UPDATE pay_order SET status=2 WHERE status=0 AND addtime < ?` 绑定普通时间参数。同时不再用 `let _ = ...` 吞掉错误，改为 `match` 输出过期数量和错误日志。
 
 ### 8. 编译需要足够内存
 Rust release 编译内存消耗大，512MB VPS 会 OOM。解决办法：添加 2GB swap 或在本地编译后上传二进制。
@@ -1204,6 +1206,46 @@ curl -sS -L https://你的WordPress域名/ | head -c 32
 ```
 
 输出应直接以 `<!DOCTYPE HTML>` 或 `<!doctype html>` 开始，不应含有 `4选项`。本问题未修改 modown 或 monster8 的主题模板。
+
+### 16. MySQL 5.6 参数化 INTERVAL 兼容性问题
+
+**现象**：订单过期后台任务每 3 分钟执行但始终失败，订单保持 `status=0` 永不过期，且日志中无任何错误信息。
+
+**根因**：`UPDATE pay_order SET status=2 WHERE status=0 AND addtime < DATE_SUB(NOW(), INTERVAL ? MINUTE)` 中的 `INTERVAL ? MINUTE` 在 MySQL 5.6 与 SQLx 预处理语句组合下无法正确绑定参数。旧代码用 `let _ = ...` 忽略错误，所以任务失败时没有任何日志。
+
+**修复**：在 Rust 中计算截止时间后绑定普通 `NaiveDateTime` 参数，不再把分钟数放进 MySQL 的 `INTERVAL` 语法：
+
+```rust
+let cutoff = chrono::Local::now().naive_local() - chrono::Duration::minutes(minutes);
+sqlx::query("UPDATE pay_order SET status=2 WHERE status=0 AND addtime < ?")
+    .bind(cutoff)
+    .execute(&self.pool)
+    .await?;
+```
+
+过期判断使用应用当前的新加坡时间（`chrono::Local`），数据库的 `+08:00` 配置保持不变，订单创建和支付完成时间继续使用数据库的 `NOW()`。
+
+### 17. 后台任务 panic 监控
+
+**问题**：Tokio `spawn` 的后台任务如果 panic 退出，主服务仍显示正常运行，但实际功能已丢失。
+
+**修复**：`main.rs` 中所有后台任务通过 `task_monitor` 包装，若任务 panic 退出会输出 `tracing::error!` 日志：
+
+```rust
+async fn task_monitor<F>(name: &'static str, fut: F)
+where
+    F: std::future::Future<Output = ()> + Send + 'static,
+{
+    let handle = tokio::spawn(fut);
+    if let Err(e) = handle.await {
+        tracing::error!("task {name} panicked: {e}");
+    }
+}
+```
+
+### 18. RUST_LOG 环境变量
+
+systemd service 必须设置 `Environment=RUST_LOG=info`，否则 `tracing` 默认只输出 error 级别日志，`expire_pending_orders task started` 等信息级日志不会出现在 `journalctl` 中。部署后通过 `journalctl -u rpay` 确认出现 `expire_pending_orders task started`。
 
 ### 15. WordPress 登录页“您即将提交的信息不安全”警告
 
