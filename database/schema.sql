@@ -1,5 +1,5 @@
 -- rpay database schema
--- Compatible with MySQL 5.7+ and MariaDB 10.3+
+-- Compatible with MySQL 5.6+ and MariaDB 10.3+
 
 SET NAMES utf8mb4;
 SET FOREIGN_KEY_CHECKS=0;

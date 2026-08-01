@@ -96,17 +96,19 @@ The commands below are a development-oriented outline. For a production installa
 git clone https://github.com/metasu/rpay.git
 cd rpay
 
-# 1. Initialize the database (requires MySQL/MariaDB)
-#    With root access (creates user + database automatically):
-ROOT_PASS=mysql_root_password DB_PASS=rpay_app_password ./scripts/init-db.sh
-#    Or if the MySQL user already exists:
+# 1. Create database (via BT Panel / 宝塔面板 recommended)
+#    BT Panel → Database → Add → name: rpay, user: rpay, set password
+#    Or via command line:
+#    mysql -uroot -p -e "CREATE DATABASE rpay; CREATE USER 'rpay'@'localhost' IDENTIFIED BY 'password'; GRANT ALL ON rpay.* TO 'rpay'@'localhost'; FLUSH PRIVILEGES;"
+
+# 2. Initialize the database (imports 29 tables + seed, generates admin credentials)
 DB_PASS=your_mysql_password ./scripts/init-db.sh
 
-# 2. Create the database URL file
+# 3. Create the database URL file
 echo -n "mysql://rpay:your_password@127.0.0.1:3306/rpay" > /opt/services/rpay/secrets/database-url
 chmod 600 /opt/services/rpay/secrets/database-url
 
-# 3. Deploy (builds, installs binary, creates systemd service, starts)
+# 4. Deploy (builds, installs binary, creates systemd service, starts)
 PUBLIC_URL=https://pay.example.com ./scripts/deploy.sh
 
 # Or do it manually:
@@ -290,17 +292,19 @@ No license file is currently present in the repository. Unless a license is adde
 git clone https://github.com/metasu/rpay.git
 cd rpay
 
-# 1. 初始化数据库（需要 MySQL/MariaDB）
-#    有 root 权限（自动创建用户和数据库）：
-ROOT_PASS=mysql_root密码 DB_PASS=rpay应用密码 ./scripts/init-db.sh
-#    或 MySQL 用户已存在：
+# 1. 创建数据库（推荐宝塔面板）
+#    宝塔面板 → 数据库 → 添加数据库 → 库名 rpay、用户名 rpay、设置密码
+#    或命令行：
+#    mysql -uroot -p -e "CREATE DATABASE rpay; CREATE USER 'rpay'@'localhost' IDENTIFIED BY '密码'; GRANT ALL ON rpay.* TO 'rpay'@'localhost'; FLUSH PRIVILEGES;"
+
+# 2. 初始化数据库（导入 29 张表 + 种子数据，自动生成管理员密码）
 DB_PASS=你的数据库密码 ./scripts/init-db.sh
 
-# 2. 创建数据库连接文件
+# 3. 创建数据库连接文件
 echo -n "mysql://rpay:你的密码@127.0.0.1:3306/rpay" > /opt/services/rpay/secrets/database-url
 chmod 600 /opt/services/rpay/secrets/database-url
 
-# 3. 一键部署（编译、安装二进制、创建 systemd 服务、启动）
+# 4. 一键部署（编译、安装二进制、创建 systemd 服务、启动）
 PUBLIC_URL=https://你的域名 ./scripts/deploy.sh
 
 # 或手动方式：

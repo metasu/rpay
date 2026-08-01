@@ -2,8 +2,11 @@
 set -euo pipefail
 
 # rpay database initialization script
-# Usage: ./scripts/init-db.sh
-# Creates the database, imports schema + seed, generates syskey and admin password.
+# Usage: DB_PASS=your_password ./scripts/init-db.sh
+#
+# Prerequisites: database and user already created (e.g. via BT Panel / 宝塔面板).
+# This script imports schema + seed, then generates syskey and admin password.
+# If ROOT_PASS is provided, it can also create the database and user.
 
 DB_HOST="${DB_HOST:-127.0.0.1}"
 DB_PORT="${DB_PORT:-3306}"
@@ -15,7 +18,6 @@ ROOT_PASS="${ROOT_PASS:-}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SQL_DIR="$SCRIPT_DIR/../database"
 
-# If ROOT_PASS is provided, create the MySQL user and database with root privileges
 if [ -n "$ROOT_PASS" ]; then
     echo "==> Creating database and user (using root)..."
     mysql -h"$DB_HOST" -P"$DB_PORT" -uroot -p"$ROOT_PASS" <<SQL
@@ -24,16 +26,12 @@ CREATE USER IF NOT EXISTS '$DB_USER'@'%' IDENTIFIED BY '$DB_PASS';
 GRANT ALL PRIVILEGES ON \`$DB_NAME\`.* TO '$DB_USER'@'%';
 FLUSH PRIVILEGES;
 SQL
-else
-    echo "==> Creating database (using app user)..."
-    mysql -h"$DB_HOST" -P"$DB_PORT" -u"$DB_USER" -p"$DB_PASS" -e \
-      "CREATE DATABASE IF NOT EXISTS \`$DB_NAME\` CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;" 2>/dev/null || true
 fi
 
-echo "==> Importing schema.sql..."
+echo "==> Importing schema.sql (29 tables, MySQL 5.6+ compatible)..."
 mysql -h"$DB_HOST" -P"$DB_PORT" -u"$DB_USER" -p"$DB_PASS" "$DB_NAME" < "$SQL_DIR/schema.sql"
 
-echo "==> Importing seed.sql..."
+echo "==> Importing seed.sql (payment types, plugins, disabled channel templates)..."
 mysql -h"$DB_HOST" -P"$DB_PORT" -u"$DB_USER" -p"$DB_PASS" "$DB_NAME" < "$SQL_DIR/seed.sql"
 
 echo "==> Generating syskey and admin credentials..."

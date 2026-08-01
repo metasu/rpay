@@ -12,7 +12,7 @@
 | 软件 | 最低版本 | 用途 |
 |------|---------|------|
 | Rust toolchain (rustc + cargo) | 1.75+ | 编译源码 |
-| MySQL / MariaDB | 5.7+ / 10.3+ | 数据存储 |
+| MySQL / MariaDB | 5.6+ / 10.3+ | 数据存储 |
 | Nginx（宝塔自带或独立安装） | 任意 | HTTPS 反向代理 |
 | systemd | 任意 | 服务管理 |
 
@@ -62,7 +62,7 @@ rustc --version  # 确认 >= 1.75
 wget -O install.sh https://download.bt.cn/install/install-ubuntu_6.0.sh && bash install.sh ed8484bec
 ```
 
-2. 在宝塔面板中安装 **Nginx** 和 **MySQL 5.7+**（或 MariaDB）
+2. 在宝塔面板中安装 **Nginx** 和 **MySQL 5.6+**（或 MariaDB）
 
 3. 在宝塔面板 **数据库** → **添加数据库**：
    - 数据库名：`rpay`（或任意名称）
@@ -90,6 +90,18 @@ mysql_secure_installation
 
 创建数据库和用户：
 
+**推荐：宝塔面板建库**
+
+在宝塔面板 → 数据库 → 添加数据库：
+- 数据库名：`rpay`
+- 用户名：`rpay`
+- 密码：设置一个强密码
+- 访问权限：本地服务器
+
+宝塔会自动创建数据库和用户，无需手动执行 SQL。
+
+**手动建库（无宝塔时）：**
+
 ```bash
 mysql -uroot -p <<'SQL'
 CREATE DATABASE rpay CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;
@@ -98,6 +110,8 @@ GRANT ALL PRIVILEGES ON rpay.* TO 'rpay'@'localhost';
 FLUSH PRIVILEGES;
 SQL
 ```
+
+> **MySQL 5.6 兼容**：rpay 的 `database/schema.sql` 不使用 JSON 类型、生成列或任何 5.7+ 专有语法，完全兼容 MySQL 5.6。
 
 #### 数据库时间默认设置
 
@@ -132,39 +146,54 @@ default-time-zone = '+08:00'
 
 ### 3.3 导入数据库表结构
 
-仓库提供经过 MySQL 实际导入验证的完整初始化文件，以及一键初始化脚本：
+在宝塔面板创建好数据库后，用库名和密码导入表结构和种子数据。
 
-- `scripts/init-db.sh`：一键脚本，自动创建数据库、导入 schema + seed、生成 syskey 和管理员密码
-- `database/schema.sql`：29 张 EasyPay 兼容表的完整结构;
-- `database/seed.sql`：支付类型、插件元数据和默认禁用的渠道模板，不含管理员、商户、订单或真实支付密钥。
+仓库提供经过 MySQL 实际导入验证的完整初始化文件，兼容 MySQL 5.6+：
+
+- `scripts/init-db.sh`：一键脚本，自动导入 schema + seed、生成 syskey 和管理员密码
+- `database/schema.sql`：29 张 EasyPay 兼容表的完整结构
+- `database/seed.sql`：支付类型、插件元数据和默认禁用的渠道模板，不含管理员、商户、订单或真实支付密钥
 
 #### 方式 0：一键脚本（推荐）
 
+宝塔建库后，在服务器上执行：
+
 ```bash
-DB_PASS=你的数据库密码 ./scripts/init-db.sh
+# 宝塔已建好数据库 rpay，用户 rpay，密码已设置
+DB_PASS=宝塔设置的数据库密码 ./scripts/init-db.sh
 ```
 
-脚本会自动完成：创建数据库 → 导入 schema.sql → 导入 seed.sql → 生成随机 syskey 和管理员密码，并输出凭据。
+脚本会自动完成：导入 schema.sql → 导入 seed.sql → 生成随机 syskey 和管理员密码，并输出凭据。
+
+> 如果没有通过宝塔建库，也可以用 root 密码让脚本自动建库建用户：
+> `ROOT_PASS=mysql_root密码 DB_PASS=rpay应用密码 ./scripts/init-db.sh`
 
 #### 方式 1：手动导入
-
-仓库提供经过 MySQL 实际导入验证的完整初始化文件：
-
-- `database/schema.sql`：29 张 EasyPay 兼容表的完整结构;
-- `database/seed.sql`：支付类型、插件元数据和默认禁用的渠道模板，不含管理员、商户、订单或真实支付密钥。
-
-全新安装直接执行：
 
 ```bash
 mysql -urpay -p -h127.0.0.1 rpay < database/schema.sql
 mysql -urpay -p -h127.0.0.1 rpay < database/seed.sql
 ```
 
+> 也可以在宝塔 → 数据库 → 点击数据库名 → **导入** 上传 sql 文件。
+
+导入后需要手动生成 syskey 和管理员密码（一键脚本会自动完成此步）：
+
+```bash
+SYSKEY=$(openssl rand -hex 32)
+ADMIN_PASS=$(openssl rand -base64 24 | tr -d '\n')
+mysql -urpay -p -h127.0.0.1 rpay <<SQL
+INSERT INTO pay_config (k, v) VALUES
+  ('syskey', '${SYSKEY}'),
+  ('admin_user', 'admin'),
+  ('admin_pwd', '${ADMIN_PASS}')
+ON DUPLICATE KEY UPDATE v=VALUES(v);
+SQL
+echo "Admin password: ${ADMIN_PASS}"
+echo "Syskey: ${SYSKEY}"
+```
+
 > **重要**：必须导入完整结构。仅手动创建 `pay_config`/`pay_user`/`pay_order`/`pay_channel` 4 张表是不够的。所有渠道模板默认关闭，填写真实渠道配置后再逐个启用。
-
-#### 方式 A：使用仓库初始化文件（全新安装，推荐）
-
-上述两条命令即为完整初始化。重复导入是安全的：表使用 `IF NOT EXISTS`，种子使用 `ON DUPLICATE KEY UPDATE`，且不会覆盖渠道密钥或启用状态。
 
 #### 方式 B：从旧服务器导入完整 dump（迁移现有实例）
 
