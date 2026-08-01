@@ -119,9 +119,17 @@ SQL
 
 - **时区**：`Asia/Singapore`
 - **偏移**：`UTC+08:00`（东八区）
-- **部署约定**：数据库服务和 rpay 数据库连接的会话时区均应保持为 `+08:00`
+- **应用保证**：rpay 通过 SQLx `after_connect` 钩子，在连接池建立每一条 MySQL 连接时执行 `SET time_zone = '+08:00'`
+- **启动校验**：rpay 启动时通过同一个连接池读取 `@@session.time_zone` 和 `NOW()`；会话不是 `+08:00` 时拒绝启动
 
-检查当前 MySQL/MariaDB 时区：
+因此，订单创建、支付完成、通知重试、订单过期和后台统计使用的 `NOW()`、`CURDATE()` 与 `DATE_SUB()` 均固定为 UTC+8，不依赖以下外部状态：
+
+- rpay 编译主机或运行主机的系统时区；
+- MySQL/MariaDB 的全局默认时区；
+- 应用启动前后修改过的数据库全局变量；
+- 连接池断线重连，因为每条新连接都会重新设置会话时区。
+
+数据库全局时区仍建议设为 `+08:00`，作为其他客户端和运维查询的默认值，但它不再是 rpay 时间正确性的必要条件。检查当前 MySQL/MariaDB 时区：
 
 ```sql
 SELECT @@global.time_zone AS global_time_zone,
@@ -129,20 +137,22 @@ SELECT @@global.time_zone AS global_time_zone,
        NOW() AS database_now;
 ```
 
-临时调整当前实例和当前连接（重启数据库后可能失效）：
+注意：命令行客户端查询到的 `@@session.time_zone` 仅代表该命令行连接，不能代表 rpay 连接池中的会话。部署后应同时检查服务日志中的 `MySQL session time zone initialized` 记录。
+
+如需设置数据库全局默认时区，可在 MySQL/MariaDB 配置文件的 `[mysqld]` 段加入：
+
+```ini
+default-time-zone = '+08:00'
+```
+
+也可临时调整全局值和当前运维连接；`SET GLOBAL` 不会修改已经建立的连接：
 
 ```sql
 SET GLOBAL time_zone = '+08:00';
 SET time_zone = '+08:00';
 ```
 
-如需持久化，请在 MySQL/MariaDB 配置文件的 `[mysqld]` 段加入：
-
-```ini
-default-time-zone = '+08:00'
-```
-
-修改后重启数据库服务，并再次执行上面的查询确认。不要将订单时间默认改为 UTC 或其他时区；如需改变默认时区，应同步评估历史订单、回调、对账和日志展示逻辑。
+不要只把 SQL 的 `NOW()` 改成 Rust 的 `chrono::Local::now()`：后者依赖应用运行主机时区，并且会令订单创建时间与支付、通知、过期和统计使用不同的时间基准。如需改变默认时区，应同步评估历史订单、回调、对账和日志展示逻辑。
 
 ### 3.3 导入数据库表结构
 
@@ -1268,7 +1278,7 @@ let sql = format!(
 sqlx::query(&sql).execute(&self.pool).await?;
 ```
 
-> **注意**：不能用 `chrono::Local::now()` 计算截止时间再绑定参数。rpay 的 MySQL 连接会话时区可能是 UTC（与系统时区 UTC+8 不同），而订单 `addtime` 由 SQL 的 `NOW()` 写入，两者时区必须一致。`minutes` 是代码控制的 `i64`，直接格式化进 SQL 不存在注入风险。
+> **注意**：不能用 `chrono::Local::now()` 计算截止时间再绑定参数。rpay 会在每条 SQLx 连接建立时强制 MySQL 会话使用 `+08:00`，订单 `addtime` 和过期判断都应继续使用同一数据库会话时间基准。`minutes` 是代码控制的 `i64`，直接格式化进 SQL 不存在注入风险。
 
 ### 17. 后台任务 panic 监控
 
