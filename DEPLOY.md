@@ -1229,17 +1229,17 @@ curl -sS -L https://你的WordPress域名/ | head -c 32
 
 **根因**：`UPDATE pay_order SET status=2 WHERE status=0 AND addtime < DATE_SUB(NOW(), INTERVAL ? MINUTE)` 中的 `INTERVAL ? MINUTE` 在 MySQL 5.6 与 SQLx 预处理语句组合下无法正确绑定参数。旧代码用 `let _ = ...` 忽略错误，所以任务失败时没有任何日志。
 
-**修复**：在 Rust 中计算截止时间后绑定普通 `NaiveDateTime` 参数，不再把分钟数放进 MySQL 的 `INTERVAL` 语法：
+**修复**：用 `format!` 将分钟数直接嵌入 SQL，使用 `DATE_SUB(NOW(), INTERVAL {} MINUTE)`，避免参数化 `INTERVAL ? MINUTE` 的绑定问题，同时保证截止时间与 `addtime` 使用同一个 MySQL 会话时区：
 
 ```rust
-let cutoff = chrono::Local::now().naive_local() - chrono::Duration::minutes(minutes);
-sqlx::query("UPDATE pay_order SET status=2 WHERE status=0 AND addtime < ?")
-    .bind(cutoff)
-    .execute(&self.pool)
-    .await?;
+let sql = format!(
+    "UPDATE pay_order SET status=2 WHERE status=0 AND addtime < DATE_SUB(NOW(), INTERVAL {} MINUTE)",
+    minutes
+);
+sqlx::query(&sql).execute(&self.pool).await?;
 ```
 
-过期判断使用应用当前的新加坡时间（`chrono::Local`），数据库的 `+08:00` 配置保持不变，订单创建和支付完成时间继续使用数据库的 `NOW()`。
+> **注意**：不能用 `chrono::Local::now()` 计算截止时间再绑定参数。rpay 的 MySQL 连接会话时区可能是 UTC（与系统时区 UTC+8 不同），而订单 `addtime` 由 SQL 的 `NOW()` 写入，两者时区必须一致。`minutes` 是代码控制的 `i64`，直接格式化进 SQL 不存在注入风险。
 
 ### 17. 后台任务 panic 监控
 
