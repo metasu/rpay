@@ -204,8 +204,8 @@ async fn dashboard(State(state): State<AppState>, jar: CookieJar) -> Response {
         Err(StoreError::NotFound) => return unauthorized_redirect(),
         Err(_) => return server_error(),
     };
-    let order_count = state.store.count_orders(Some(uid), None, None).await.unwrap_or(0);
-    let paid_count = state.store.count_orders(Some(uid), Some(1), None).await.unwrap_or(0);
+    let order_count = state.store.count_orders(Some(uid), None, None, None, None, false).await.unwrap_or(0);
+    let paid_count = state.store.count_orders(Some(uid), Some(1), None, None, None, false).await.unwrap_or(0);
     let body = format!(
         r#"<h1>商户概览 #{uid}</h1>
 <div class="grid">
@@ -244,11 +244,11 @@ async fn orders_list(State(state): State<AppState>, jar: CookieJar, Query(q): Qu
     };
     let page_no = q.page.unwrap_or(1).max(1);
     let offset = (page_no - 1) * PAGE_SIZE;
-    let rows = match state.store.list_orders(offset, PAGE_SIZE, Some(uid), None, None).await {
+    let rows = match state.store.list_orders(offset, PAGE_SIZE, Some(uid), None, None, None, None, false).await {
         Ok(r) => r,
         Err(_) => return server_error(),
     };
-    let total = state.store.count_orders(Some(uid), None, None).await.unwrap_or(0);
+    let total = state.store.count_orders(Some(uid), None, None, None, None, false).await.unwrap_or(0);
     let total_pages = ((total as f64) / (PAGE_SIZE as f64)).ceil().max(1.0) as i64;
 
     let mut table = String::from(

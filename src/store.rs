@@ -630,20 +630,29 @@ impl Store {
         uid: Option<u64>,
         status: Option<i8>,
         search: Option<&str>,
+        product: Option<&str>,
+        channel_filter: Option<&str>,
+        channel_exclude: bool,
     ) -> Result<Vec<OrderListRow>, StoreError> {
         let mut sql = String::from(
-            "SELECT trade_no,out_trade_no,uid,name,CAST(money AS CHAR) AS money,status,addtime FROM pay_order WHERE 1=1",
+            "SELECT o.trade_no,o.out_trade_no,o.uid,o.name,CAST(o.money AS CHAR) AS money,o.status,o.addtime,o.domain,c.name AS channel_name,c.plugin AS channel_plugin FROM pay_order o LEFT JOIN pay_channel c ON c.id=o.channel WHERE 1=1",
         );
         if uid.is_some() {
-            sql.push_str(" AND uid=?");
+            sql.push_str(" AND o.uid=?");
         }
         if status.is_some() {
-            sql.push_str(" AND status=?");
+            sql.push_str(" AND o.status=?");
         }
         if search.is_some() {
-            sql.push_str(" AND (trade_no LIKE ? OR out_trade_no LIKE ?)");
+            sql.push_str(" AND (o.trade_no LIKE ? OR o.out_trade_no LIKE ?)");
         }
-        sql.push_str(" ORDER BY addtime DESC LIMIT ? OFFSET ?");
+        if product.is_some() {
+            sql.push_str(" AND o.name LIKE ?");
+        }
+        if channel_filter.is_some() {
+            sql.push_str(if channel_exclude { " AND (c.plugin<>? AND c.name<>?)" } else { " AND (c.plugin=? OR c.name=?)" });
+        }
+        sql.push_str(" ORDER BY o.addtime DESC LIMIT ? OFFSET ?");
         let mut query = sqlx::query(&sql);
         if let Some(u) = uid {
             query = query.bind(u);
@@ -654,6 +663,12 @@ impl Store {
         if let Some(s) = search {
             let like = format!("%{s}%");
             query = query.bind(like.clone()).bind(like);
+        }
+        if let Some(p) = product {
+            query = query.bind(format!("%{p}%"));
+        }
+        if let Some(c) = channel_filter {
+            query = query.bind(c).bind(c);
         }
         query = query.bind(limit).bind(offset);
         let rows = query.fetch_all(&self.pool).await?;
@@ -667,33 +682,27 @@ impl Store {
                     money: row.try_get("money")?,
                     status: row.try_get("status")?,
                     addtime: row.try_get("addtime")?,
+                    domain: row.try_get("domain")?,
+                    channel_name: row.try_get("channel_name")?,
+                    channel_plugin: row.try_get("channel_plugin")?,
                 })
             })
             .collect()
     }
 
-    pub async fn count_orders(&self, uid: Option<u64>, status: Option<i8>, search: Option<&str>) -> Result<i64, StoreError> {
-        let mut sql = String::from("SELECT COUNT(*) FROM pay_order WHERE 1=1");
-        if uid.is_some() {
-            sql.push_str(" AND uid=?");
-        }
-        if status.is_some() {
-            sql.push_str(" AND status=?");
-        }
-        if search.is_some() {
-            sql.push_str(" AND (trade_no LIKE ? OR out_trade_no LIKE ?)");
-        }
+    pub async fn count_orders(&self, uid: Option<u64>, status: Option<i8>, search: Option<&str>, product: Option<&str>, channel_filter: Option<&str>, channel_exclude: bool) -> Result<i64, StoreError> {
+        let mut sql = String::from("SELECT COUNT(*) FROM pay_order o LEFT JOIN pay_channel c ON c.id=o.channel WHERE 1=1");
+        if uid.is_some() { sql.push_str(" AND o.uid=?"); }
+        if status.is_some() { sql.push_str(" AND o.status=?"); }
+        if search.is_some() { sql.push_str(" AND (o.trade_no LIKE ? OR o.out_trade_no LIKE ?)"); }
+        if product.is_some() { sql.push_str(" AND o.name LIKE ?"); }
+        if channel_filter.is_some() { sql.push_str(if channel_exclude { " AND (c.plugin<>? AND c.name<>?)" } else { " AND (c.plugin=? OR c.name=?)" }); }
         let mut query = sqlx::query_scalar(&sql);
-        if let Some(u) = uid {
-            query = query.bind(u);
-        }
-        if let Some(s) = status {
-            query = query.bind(s);
-        }
-        if let Some(s) = search {
-            let like = format!("%{s}%");
-            query = query.bind(like.clone()).bind(like);
-        }
+        if let Some(u) = uid { query = query.bind(u); }
+        if let Some(s) = status { query = query.bind(s); }
+        if let Some(s) = search { let like = format!("%{s}%"); query = query.bind(like.clone()).bind(like); }
+        if let Some(p) = product { query = query.bind(format!("%{p}%")); }
+        if let Some(c) = channel_filter { query = query.bind(c).bind(c); }
         let count: i64 = query.fetch_one(&self.pool).await?;
         Ok(count)
     }
@@ -774,19 +783,23 @@ impl Store {
         Ok(result.rows_affected() > 0)
     }
 
-    pub async fn order_stats(&self, uid: Option<u64>, start: Option<&str>, end: Option<&str>) -> Result<OrderStatsRow, StoreError> {
+    pub async fn order_stats(&self, uid: Option<u64>, start: Option<&str>, end: Option<&str>, product: Option<&str>, channel_filter: Option<&str>, channel_exclude: bool) -> Result<OrderStatsRow, StoreError> {
         let mut conds: Vec<&str> = Vec::new();
-        if uid.is_some() { conds.push("uid=?"); }
-        if start.is_some() { conds.push("date>=?"); }
-        if end.is_some() { conds.push("date<=?"); }
+        if uid.is_some() { conds.push("o.uid=?"); }
+        if start.is_some() { conds.push("o.date>=?"); }
+        if end.is_some() { conds.push("o.date<=?"); }
+        if product.is_some() { conds.push("o.name LIKE ?"); }
+        if channel_filter.is_some() { conds.push(if channel_exclude { "(c.plugin<>? AND c.name<>?)" } else { "(c.plugin=? OR c.name=?)" }); }
         let cond = if conds.is_empty() { String::new() } else { format!("WHERE {}", conds.join(" AND ")) };
         let sql = format!(
-            "SELECT COUNT(*) AS total,CAST(SUM(CASE WHEN status=1 THEN 1 ELSE 0 END) AS SIGNED) AS paid,CAST(SUM(CASE WHEN status=0 THEN 1 ELSE 0 END) AS SIGNED) AS unpaid,COALESCE(CAST(SUM(money) AS CHAR),'0.00') AS total_amount,COALESCE(CAST(SUM(CASE WHEN status=1 THEN money ELSE 0 END) AS CHAR),'0.00') AS paid_amount,COALESCE(CAST(SUM(CASE WHEN status=1 THEN COALESCE(profitmoney,0) ELSE 0 END) AS CHAR),'0.00') AS profit_amount FROM pay_order {cond}"
+            "SELECT COUNT(*) AS total,CAST(SUM(CASE WHEN o.status=1 THEN 1 ELSE 0 END) AS SIGNED) AS paid,CAST(SUM(CASE WHEN o.status=0 THEN 1 ELSE 0 END) AS SIGNED) AS unpaid,COALESCE(CAST(SUM(o.money) AS CHAR),'0.00') AS total_amount,COALESCE(CAST(SUM(CASE WHEN o.status=1 THEN o.money ELSE 0 END) AS CHAR),'0.00') AS paid_amount,COALESCE(CAST(SUM(CASE WHEN o.status=1 THEN COALESCE(o.profitmoney,0) ELSE 0 END) AS CHAR),'0.00') AS profit_amount FROM pay_order o LEFT JOIN pay_channel c ON c.id=o.channel {cond}"
         );
         let mut query = sqlx::query(&sql);
         if let Some(u) = uid { query = query.bind(u); }
         if let Some(s) = start { query = query.bind(s); }
         if let Some(e) = end { query = query.bind(e); }
+        if let Some(p) = product { query = query.bind(format!("%{p}%")); }
+        if let Some(c) = channel_filter { query = query.bind(c).bind(c); }
         let row = query.fetch_one(&self.pool).await?;
         Ok(OrderStatsRow {
             total_count: row.try_get("total")?,
@@ -947,6 +960,9 @@ pub struct OrderListRow {
     pub money: String,
     pub status: i8,
     pub addtime: Option<chrono::NaiveDateTime>,
+    pub domain: Option<String>,
+    pub channel_name: Option<String>,
+    pub channel_plugin: Option<String>,
 }
 
 #[derive(Clone, Debug)]

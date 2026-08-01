@@ -434,12 +434,23 @@ async fn merchant_delete(
 
 #[derive(Deserialize)]
 struct OrderListQuery {
-    uid: Option<u64>,
-    status: Option<i8>,
+    uid: Option<String>,
+    status: Option<String>,
     q: Option<String>,
     page: Option<i64>,
     start: Option<String>,
     end: Option<String>,
+    product: Option<String>,
+    channel: Option<String>,
+    exclude_channel: Option<String>,
+}
+
+fn parse_optional_u64(value: Option<&str>) -> Option<u64> {
+    value.filter(|s| !s.trim().is_empty()).and_then(|s| s.parse().ok())
+}
+
+fn parse_optional_i8(value: Option<&str>) -> Option<i8> {
+    value.filter(|s| !s.trim().is_empty()).and_then(|s| s.parse().ok())
 }
 
 async fn orders_list(
@@ -453,29 +464,35 @@ async fn orders_list(
     let page_no = q.page.unwrap_or(1).max(1);
     let offset = (page_no - 1) * PAGE_SIZE;
     let search = q.q.as_deref().filter(|s| !s.is_empty());
-    let rows = match state.store.list_orders(offset, PAGE_SIZE, q.uid, q.status, search).await {
+    let uid = parse_optional_u64(q.uid.as_deref());
+    let status = parse_optional_i8(q.status.as_deref());
+    let product = q.product.as_deref().filter(|s| !s.trim().is_empty());
+    let channel = q.channel.as_deref().filter(|s| !s.trim().is_empty());
+    let exclude_channel = q.exclude_channel.as_deref() == Some("1");
+    let rows = match state.store.list_orders(offset, PAGE_SIZE, uid, status, search, product, channel, exclude_channel).await {
         Ok(r) => r,
         Err(_) => return server_error(),
     };
-    let total = state.store.count_orders(q.uid, q.status, search).await.unwrap_or(0);
+    let total = state.store.count_orders(uid, status, search, product, channel, exclude_channel).await.unwrap_or(0);
 
     let mut table = String::from(
-        "<table><tr><th><input type=\"checkbox\" onclick=\"document.querySelectorAll('input[name=trade_nos]').forEach(c=>c.checked=this.checked)\"></th><th>交易号</th><th>商户订单号</th><th>商户</th><th>商品</th><th>金额</th><th>状态</th><th>时间</th><th></th></tr>",
+        "<table><tr><th><input type=\"checkbox\" onclick=\"document.querySelectorAll('input[name=trade_nos]').forEach(c=>c.checked=this.checked)\"></th><th>交易号</th><th>商户订单号</th><th>商户</th><th>商品</th><th>网站来源</th><th>细分通道</th><th>金额</th><th>状态</th><th>时间</th><th></th></tr>",
     );
     for o in &rows {
         table.push_str(&format!(
-            "<tr><td><input type=\"checkbox\" name=\"trade_nos\" value=\"{trade_no}\" form=\"batchForm\"></td><td><a class=\"link\" href=\"/admin/orders/{trade_no}\">{trade_no}</a></td><td>{out_trade_no}</td><td><a class=\"link\" href=\"/admin/merchants/{uid}\">{uid}</a></td><td>{name}</td><td>¥{money}</td><td>{status}</td><td>{addtime}</td><td><a class=\"link\" href=\"/admin/orders/{trade_no}\">详情</a></td></tr>",
+            "<tr><td><input type=\"checkbox\" name=\"trade_nos\" value=\"{trade_no}\" form=\"batchForm\"></td><td><a class=\"link\" href=\"/admin/orders/{trade_no}\">{trade_no}</a></td><td>{out_trade_no}</td><td><a class=\"link\" href=\"/admin/merchants/{uid}\">{uid}</a></td><td>{name}</td><td>{domain}</td><td>{channel}</td><td>¥{money}</td><td>{status}</td><td>{addtime}</td><td><a class=\"link\" href=\"/admin/orders/{trade_no}\">详情</a></td></tr>",
             trade_no = escape(&o.trade_no),
             out_trade_no = escape(&o.out_trade_no),
             uid = o.uid,
             name = escape(&o.name),
+            domain = escape(o.domain.as_deref().unwrap_or("-")),
+            channel = escape(o.channel_plugin.as_deref().or(o.channel_name.as_deref()).unwrap_or("-")),
             money = escape(&o.money),
             status = status_badge(o.status),
             addtime = o.addtime.map(|t| t.format("%Y-%m-%d %H:%M").to_string()).unwrap_or_default(),
         ));
     }
     table.push_str("</table>");
-
     let pager = render_pager("/admin/orders", q.q.as_deref(), page_no, total);
     let body = format!(
         r#"<h1>订单查询</h1>
@@ -483,6 +500,9 @@ async fn orders_list(
 <form method="get" style="display:flex;gap:8px;margin-bottom:16px">
 <input name="q" placeholder="交易号/商户订单号" value="{search}">
 <input name="uid" placeholder="商户UID" value="{uid}">
+<input name="product" placeholder="商品名" value="{product}">
+<input name="channel" placeholder="渠道插件或名称，如 rpay-stripe" value="{channel}">
+<label style="font-size:13px"><input type="checkbox" name="exclude_channel" value="1" style="width:auto" {exclude}> 排除该渠道</label>
 <select name="status">
 <option value="">全部状态</option>
 <option value="1" {s1}>已支付</option>
@@ -501,10 +521,13 @@ async fn orders_list(
 {pager}
 </div>"#,
         search = escape(q.q.as_deref().unwrap_or("")),
-        uid = q.uid.map(|u| u.to_string()).unwrap_or_default(),
-        s1 = if q.status == Some(1) { "selected" } else { "" },
-        s0 = if q.status == Some(0) { "selected" } else { "" },
-        s3 = if q.status == Some(3) { "selected" } else { "" },
+        uid = escape(q.uid.as_deref().unwrap_or("")),
+        product = escape(q.product.as_deref().unwrap_or("")),
+        channel = escape(q.channel.as_deref().unwrap_or("")),
+        exclude = if exclude_channel { "checked" } else { "" },
+        s1 = if status == Some(1) { "selected" } else { "" },
+        s0 = if status == Some(0) { "selected" } else { "" },
+        s3 = if status == Some(3) { "selected" } else { "" },
     );
     Html(page("订单查询 - rpay 管理后台", &admin_nav("orders"), &body)).into_response()
 }
@@ -519,7 +542,11 @@ async fn orders_stats(
     }
     let start = q.start.as_deref().filter(|s| !s.is_empty());
     let end = q.end.as_deref().filter(|s| !s.is_empty());
-    let stats = match state.store.order_stats(q.uid, start, end).await {
+    let uid = parse_optional_u64(q.uid.as_deref());
+    let product = q.product.as_deref().filter(|s| !s.trim().is_empty());
+    let channel = q.channel.as_deref().filter(|s| !s.trim().is_empty());
+    let exclude_channel = q.exclude_channel.as_deref() == Some("1");
+    let stats = match state.store.order_stats(uid, start, end, product, channel, exclude_channel).await {
         Ok(s) => s,
         Err(_) => return server_error(),
     };
@@ -552,6 +579,7 @@ async fn orders_stats(
 <form method="get" style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap;align-items:center">
 <label style="font-size:13px;color:#6b7280">商户UID</label>
 <input name="uid" placeholder="留空查全部" value="{uid}" style="width:120px">
+<input name="product" placeholder="商品名" value="{product}" style="width:180px">
 <label style="font-size:13px;color:#6b7280">开始日期</label>
 <input type="date" name="start" value="{start}">
 <label style="font-size:13px;color:#6b7280">结束日期</label>
@@ -571,7 +599,8 @@ async fn orders_stats(
 <h2 style="margin-top:24px">每日成交（{period}）</h2>
 {daily_table}
 </div>"#,
-        uid = q.uid.map(|u| u.to_string()).unwrap_or_default(),
+        uid = escape(q.uid.as_deref().unwrap_or("")),
+        product = escape(q.product.as_deref().unwrap_or("")),
         start = escape(q.start.as_deref().unwrap_or("")),
         end = escape(q.end.as_deref().unwrap_or("")),
         period = escape(&period_label),
@@ -1009,4 +1038,17 @@ async fn settings_update(
         }
     }
     render_settings(&state, Some("已保存")).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{parse_optional_i8, parse_optional_u64};
+
+    #[test]
+    fn empty_order_numeric_filters_are_unset() {
+        assert_eq!(parse_optional_u64(Some("")), None);
+        assert_eq!(parse_optional_i8(Some("")), None);
+        assert_eq!(parse_optional_u64(Some("42")), Some(42));
+        assert_eq!(parse_optional_i8(Some("1")), Some(1));
+    }
 }
