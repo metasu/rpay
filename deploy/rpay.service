@@ -1,0 +1,24 @@
+[Unit]
+Description=rpay - Rust payment gateway
+After=network-online.target mysql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=rpay
+Group=rpay
+WorkingDirectory=/opt/services/rpay
+Environment=RUST_LOG=info
+ExecStart=/opt/services/rpay/bin/rpay --listen 127.0.0.1:16889 --public-base-url https://rpay.example.com --database-url-file /opt/services/rpay/secrets/database-url
+Restart=always
+RestartSec=3
+LimitNOFILE=65535
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/opt/services/rpay/data /opt/services/rpay/logs /opt/services/rpay/backups
+ReadOnlyPaths=/opt/services/rpay/bin /opt/services/rpay/config /opt/services/rpay/secrets
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

@@ -96,29 +96,30 @@ The commands below are a development-oriented outline. For a production installa
 git clone https://github.com/metasu/rpay.git
 cd rpay
 
-# 1. Create database and import schema + seed (requires MySQL/MariaDB)
-#    Either run the init script:
+# 1. Initialize the database (requires MySQL/MariaDB)
+#    With root access (creates user + database automatically):
+ROOT_PASS=mysql_root_password DB_PASS=rpay_app_password ./scripts/init-db.sh
+#    Or if the MySQL user already exists:
 DB_PASS=your_mysql_password ./scripts/init-db.sh
-#    ...or do it manually:
-#    mysql -urpay -p -h127.0.0.1 rpay < database/schema.sql
-#    mysql -urpay -p -h127.0.0.1 rpay < database/seed.sql
-#    Then generate syskey and admin password (see DEPLOY.md section 3.3)
 
-# 2. Build and test the Rust project
+# 2. Create the database URL file
+echo -n "mysql://rpay:your_password@127.0.0.1:3306/rpay" > /opt/services/rpay/secrets/database-url
+chmod 600 /opt/services/rpay/secrets/database-url
+
+# 3. Deploy (builds, installs binary, creates systemd service, starts)
+PUBLIC_URL=https://pay.example.com ./scripts/deploy.sh
+
+# Or do it manually:
 cargo build --release
-cargo test
-
-# 3. Prepare the database URL file
-echo -n "mysql://rpay:your_password@127.0.0.1:3306/rpay" > /tmp/database-url
-
-# 4. Start the service
 ./target/release/rpay \
   --listen 127.0.0.1:16889 \
   --public-base-url https://pay.example.com \
-  --database-url-file /tmp/database-url
+  --database-url-file /opt/services/rpay/secrets/database-url
 ```
 
 The init script (`scripts/init-db.sh`) creates the database, imports the full 29-table schema and seed data, and generates a random `syskey` and admin password automatically.
+
+The deploy script (`scripts/deploy.sh`) compiles the binary, creates the system user and directories, installs the systemd service from `deploy/rpay.service`, and starts the service.
 
 The current runtime configuration is supplied through command-line arguments or `RPAY_*` environment variables. The TOML file is an example/reference file and should not be treated as the complete runtime configuration contract.
 
@@ -191,6 +192,8 @@ See the WordPress section in [`DEPLOY.md`](DEPLOY.md) for file lists, configurat
 - [`database/schema.sql`](database/schema.sql) - complete database schema.
 - [`database/seed.sql`](database/seed.sql) - non-sensitive initial metadata and disabled channel templates.
 - [`scripts/init-db.sh`](scripts/init-db.sh) - one-command database initialization script.
+- [`scripts/deploy.sh`](scripts/deploy.sh) - one-command build + deploy + systemd setup script.
+- [`deploy/rpay.service`](deploy/rpay.service) - systemd service template.
 
 ### License
 
@@ -287,29 +290,30 @@ No license file is currently present in the repository. Unless a license is adde
 git clone https://github.com/metasu/rpay.git
 cd rpay
 
-# 1. 创建数据库并导入 schema + seed（需要 MySQL/MariaDB）
-#    方式一：运行初始化脚本（自动生成 syskey 和管理员密码）
+# 1. 初始化数据库（需要 MySQL/MariaDB）
+#    有 root 权限（自动创建用户和数据库）：
+ROOT_PASS=mysql_root密码 DB_PASS=rpay应用密码 ./scripts/init-db.sh
+#    或 MySQL 用户已存在：
 DB_PASS=你的数据库密码 ./scripts/init-db.sh
-#    方式二：手动导入
-#    mysql -urpay -p -h127.0.0.1 rpay < database/schema.sql
-#    mysql -urpay -p -h127.0.0.1 rpay < database/seed.sql
-#    然后生成 syskey 和管理员密码（见 DEPLOY.md 3.3 节）
 
-# 2. 编译并运行 Rust 测试
+# 2. 创建数据库连接文件
+echo -n "mysql://rpay:你的密码@127.0.0.1:3306/rpay" > /opt/services/rpay/secrets/database-url
+chmod 600 /opt/services/rpay/secrets/database-url
+
+# 3. 一键部署（编译、安装二进制、创建 systemd 服务、启动）
+PUBLIC_URL=https://你的域名 ./scripts/deploy.sh
+
+# 或手动方式：
 cargo build --release
-cargo test
-
-# 3. 准备数据库连接文件
-echo -n "mysql://rpay:你的密码@127.0.0.1:3306/rpay" > /tmp/database-url
-
-# 4. 启动服务
 ./target/release/rpay \
   --listen 127.0.0.1:16889 \
-  --public-base-url https://pay.example.com \
-  --database-url-file /tmp/database-url
+  --public-base-url https://你的域名 \
+  --database-url-file /opt/services/rpay/secrets/database-url
 ```
 
 初始化脚本 `scripts/init-db.sh` 会自动创建数据库、导入完整 29 表结构和种子数据，并生成随机 `syskey` 和管理员密码。
+
+部署脚本 `scripts/deploy.sh` 会编译二进制、创建系统用户和目录、从 `deploy/rpay.service` 安装 systemd 服务并启动。
 
 当前程序运行时配置通过命令行参数或 `RPAY_*` 环境变量提供。TOML 文件是示例/记录文件，不应被视为完整的运行时配置契约。
 
@@ -382,6 +386,8 @@ WordPress 适配层使用 MD5 对商户请求签名，并显式传递支付类�
 - [`database/schema.sql`](database/schema.sql)：完整数据库结构。
 - [`database/seed.sql`](database/seed.sql)：非敏感初始化元数据和默认关闭的渠道模板。
 - [`scripts/init-db.sh`](scripts/init-db.sh)：一键数据库初始化脚本。
+- [`scripts/deploy.sh`](scripts/deploy.sh)：一键编译部署脚本。
+- [`deploy/rpay.service`](deploy/rpay.service)：systemd 服务模板。
 
 ### 许可证
 

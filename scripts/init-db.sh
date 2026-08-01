@@ -10,13 +10,25 @@ DB_PORT="${DB_PORT:-3306}"
 DB_NAME="${DB_NAME:-rpay}"
 DB_USER="${DB_USER:-rpay}"
 DB_PASS="${DB_PASS:?  set DB_PASS=your_password before running}"
+ROOT_PASS="${ROOT_PASS:-}"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SQL_DIR="$SCRIPT_DIR/../database"
 
-echo "==> Creating database and user (if not exists)..."
-mysql -h"$DB_HOST" -P"$DB_PORT" -u"$DB_USER" -p"$DB_PASS" -e \
-  "CREATE DATABASE IF NOT EXISTS \`$DB_NAME\` CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;" 2>/dev/null || true
+# If ROOT_PASS is provided, create the MySQL user and database with root privileges
+if [ -n "$ROOT_PASS" ]; then
+    echo "==> Creating database and user (using root)..."
+    mysql -h"$DB_HOST" -P"$DB_PORT" -uroot -p"$ROOT_PASS" <<SQL
+CREATE DATABASE IF NOT EXISTS \`$DB_NAME\` CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;
+CREATE USER IF NOT EXISTS '$DB_USER'@'%' IDENTIFIED BY '$DB_PASS';
+GRANT ALL PRIVILEGES ON \`$DB_NAME\`.* TO '$DB_USER'@'%';
+FLUSH PRIVILEGES;
+SQL
+else
+    echo "==> Creating database (using app user)..."
+    mysql -h"$DB_HOST" -P"$DB_PORT" -u"$DB_USER" -p"$DB_PASS" -e \
+      "CREATE DATABASE IF NOT EXISTS \`$DB_NAME\` CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;" 2>/dev/null || true
+fi
 
 echo "==> Importing schema.sql..."
 mysql -h"$DB_HOST" -P"$DB_PORT" -u"$DB_USER" -p"$DB_PASS" "$DB_NAME" < "$SQL_DIR/schema.sql"
