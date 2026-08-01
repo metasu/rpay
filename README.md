@@ -91,39 +91,45 @@ Main source modules:
 ### Quick start
 
 The commands below are a development-oriented outline. For a production installation, follow [`DEPLOY.md`](DEPLOY.md) from start to finish.
-
 ```bash
 # Clone and enter the repository
 git clone https://github.com/metasu/rpay.git
 cd rpay
 
-# Build and test the Rust project
+# 1. Create database and import schema + seed (requires MySQL/MariaDB)
+#    Either run the init script:
+DB_PASS=your_mysql_password ./scripts/init-db.sh
+#    ...or do it manually:
+#    mysql -urpay -p -h127.0.0.1 rpay < database/schema.sql
+#    mysql -urpay -p -h127.0.0.1 rpay < database/seed.sql
+#    Then generate syskey and admin password (see DEPLOY.md section 3.3)
+
+# 2. Build and test the Rust project
 cargo build --release
 cargo test
 
-# Prepare a local configuration file from the example
-cp config/config.example.toml config/config.toml
+# 3. Prepare the database URL file
+echo -n "mysql://rpay:your_password@127.0.0.1:3306/rpay" > /tmp/database-url
+
+# 4. Start the service
+./target/release/rpay \
+  --listen 127.0.0.1:16889 \
+  --public-base-url https://pay.example.com \
+  --database-url-file /tmp/database-url
 ```
+
+The init script (`scripts/init-db.sh`) creates the database, imports the full 29-table schema and seed data, and generates a random `syskey` and admin password automatically.
 
 The current runtime configuration is supplied through command-line arguments or `RPAY_*` environment variables. The TOML file is an example/reference file and should not be treated as the complete runtime configuration contract.
 
-A typical production command is:
+After starting the service:
 
-```bash
-./target/release/rpay \\
-  --listen 127.0.0.1:16889 \\
-  --public-base-url https://pay.example.com \\
-  --database-url-file /opt/services/rpay/secrets/database-url
-```
+1. Log in to `/admin` with the generated admin credentials.
+2. Create a merchant account and generate a unique merchant API key.
+3. Configure provider credentials and callback/webhook endpoints in the admin panel.
+4. Enable only the channels that have been tested successfully.
 
-Before starting the service:
-
-1. Create the database and import `database/schema.sql`.
-2. Import `database/seed.sql` for non-sensitive payment types, plugin metadata, and disabled channel templates.
-3. Generate a unique `syskey` and an initial administrator password in `pay_config`.
-4. Create a merchant account and generate a unique merchant API key.
-5. Configure provider credentials and callback/webhook endpoints in the admin panel.
-6. Enable only the channels that have been tested successfully.
+For a complete production deployment guide (systemd, Nginx, SSL, WordPress integration), see [`DEPLOY.md`](DEPLOY.md).
 
 ### HTTP integration
 
@@ -184,6 +190,7 @@ See the WordPress section in [`DEPLOY.md`](DEPLOY.md) for file lists, configurat
 - [`config/config.example.toml`](config/config.example.toml) - example listener and public URL values.
 - [`database/schema.sql`](database/schema.sql) - complete database schema.
 - [`database/seed.sql`](database/seed.sql) - non-sensitive initial metadata and disabled channel templates.
+- [`scripts/init-db.sh`](scripts/init-db.sh) - one-command database initialization script.
 
 ### License
 
@@ -275,40 +282,45 @@ No license file is currently present in the repository. Unless a license is adde
 
 ### 快速开始
 
-以下命令用于开发或验证流程。生产部署请完整阅读 [`DEPLOY.md`](DEPLOY.md)。
-
 ```bash
 # 克隆仓库并进入目录
 git clone https://github.com/metasu/rpay.git
 cd rpay
 
-# 编译并运行 Rust 测试
+# 1. 创建数据库并导入 schema + seed（需要 MySQL/MariaDB）
+#    方式一：运行初始化脚本（自动生成 syskey 和管理员密码）
+DB_PASS=你的数据库密码 ./scripts/init-db.sh
+#    方式二：手动导入
+#    mysql -urpay -p -h127.0.0.1 rpay < database/schema.sql
+#    mysql -urpay -p -h127.0.0.1 rpay < database/seed.sql
+#    然后生成 syskey 和管理员密码（见 DEPLOY.md 3.3 节）
+
+# 2. 编译并运行 Rust 测试
 cargo build --release
 cargo test
 
-# 从示例复制一份本地配置记录
-cp config/config.example.toml config/config.toml
+# 3. 准备数据库连接文件
+echo -n "mysql://rpay:你的密码@127.0.0.1:3306/rpay" > /tmp/database-url
+
+# 4. 启动服务
+./target/release/rpay \
+  --listen 127.0.0.1:16889 \
+  --public-base-url https://pay.example.com \
+  --database-url-file /tmp/database-url
 ```
+
+初始化脚本 `scripts/init-db.sh` 会自动创建数据库、导入完整 29 表结构和种子数据，并生成随机 `syskey` 和管理员密码。
 
 当前程序运行时配置通过命令行参数或 `RPAY_*` 环境变量提供。TOML 文件是示例/记录文件，不应被视为完整的运行时配置契约。
 
-典型生产启动命令：
+启动服务后：
 
-```bash
-./target/release/rpay \\
-  --listen 127.0.0.1:16889 \\
-  --public-base-url https://pay.example.com \\
-  --database-url-file /opt/services/rpay/secrets/database-url
-```
+1. 使用生成的管理员凭据登录 `/admin`。
+2. 创建商户并生成独立的商户 API key。
+3. 在管理后台配置支付平台凭据、回调地址和 Webhook。
+4. 仅启用已完成测试的渠道。
 
-启动服务前需要完成：
-
-1. 创建数据库并导入 `database/schema.sql`。
-2. 导入 `database/seed.sql`，获取非敏感支付类型、插件元数据和默认关闭的渠道模板。
-3. 在 `pay_config` 中生成独立的 `syskey` 和初始管理员密码。
-4. 创建商户并生成独立的商户 API key。
-5. 在管理后台配置支付平台凭据、回调地址和 Webhook。
-6. 仅启用已完成测试的渠道。
+完整生产部署指南（systemd、Nginx、SSL、WordPress 接入）请阅读 [`DEPLOY.md`](DEPLOY.md)。
 
 ### HTTP 接入流程
 
@@ -369,6 +381,7 @@ WordPress 适配层使用 MD5 对商户请求签名，并显式传递支付类�
 - [`config/config.example.toml`](config/config.example.toml)：监听地址和公网 URL 示例。
 - [`database/schema.sql`](database/schema.sql)：完整数据库结构。
 - [`database/seed.sql`](database/seed.sql)：非敏感初始化元数据和默认关闭的渠道模板。
+- [`scripts/init-db.sh`](scripts/init-db.sh)：一键数据库初始化脚本。
 
 ### 许可证
 

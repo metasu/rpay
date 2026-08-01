@@ -132,6 +132,22 @@ default-time-zone = '+08:00'
 
 ### 3.3 导入数据库表结构
 
+仓库提供经过 MySQL 实际导入验证的完整初始化文件，以及一键初始化脚本：
+
+- `scripts/init-db.sh`：一键脚本，自动创建数据库、导入 schema + seed、生成 syskey 和管理员密码
+- `database/schema.sql`：29 张 EasyPay 兼容表的完整结构;
+- `database/seed.sql`：支付类型、插件元数据和默认禁用的渠道模板，不含管理员、商户、订单或真实支付密钥。
+
+#### 方式 0：一键脚本（推荐）
+
+```bash
+DB_PASS=你的数据库密码 ./scripts/init-db.sh
+```
+
+脚本会自动完成：创建数据库 → 导入 schema.sql → 导入 seed.sql → 生成随机 syskey 和管理员密码，并输出凭据。
+
+#### 方式 1：手动导入
+
 仓库提供经过 MySQL 实际导入验证的完整初始化文件：
 
 - `database/schema.sql`：29 张 EasyPay 兼容表的完整结构;
