@@ -34,13 +34,13 @@ The project is designed for deployments where the operator needs control over th
 
 ### Supported payment channels
 
-| Provider | Plugin | Notes |
-|---|---|---|
-| Alipay | `alipay` | Mobile web payment flow and desktop QR-code flow |
-| WeChat Pay V2 | `wxpay` | WeChat Pay V2 unified order integration |
-| WeChat Pay V3 | `wxpayn` | WeChat Pay V3 API integration |
-| PayPal | `paypal` | Orders API, capture, return handling, and webhook fallback |
-| Stripe | `stripe` | Checkout Sessions, configurable currency conversion, and webhook fallback |
+| Provider | Plugin | Default currency | Min amount | Notes |
+|---|---|---|---|---|
+| Alipay | `alipay` | CNY | ¥0.01 | Mobile web payment flow and desktop QR-code flow |
+| Stripe | `stripe` | EUR (€) | ¥5.00 | Checkout Sessions, configurable currency conversion, and webhook fallback |
+| PayPal | `paypal` | GBP (£) | ¥1.00 | Orders API, capture, return handling, and webhook fallback |
+| WeChat Pay V2 | `wxpay` | CNY | ¥0.01 | WeChat Pay V2 unified order integration (disabled by default) |
+| WeChat Pay V3 | `wxpayn` | CNY | ¥0.01 | WeChat Pay V3 API integration (disabled by default) |
 
 Every provider is disabled until its credentials, callback URL, currency settings, and channel configuration have been reviewed. Do not enable a production channel with placeholder credentials.
 
@@ -239,13 +239,13 @@ No license file is currently present in the repository. Unless a license is adde
 
 ### 支持的支付渠道
 
-| 支付平台 | 插件标识 | 说明 |
-|---|---|---|
-| 支付宝 | `alipay` | 移动网页支付，以及桌面端二维码支付流程 |
-| 微信支付 V2 | `wxpay` | 微信支付 V2 统一下单 |
-| 微信支付 V3 | `wxpayn` | 微信支付 V3 API |
-| PayPal | `paypal` | Orders API、capture、同步返回和 Webhook 兜底 |
-| Stripe | `stripe` | Checkout Sessions、可配置货币转换和 Webhook 兜底 |
+| 支付平台 | 插件标识 | 默认币种 | 最小金额 | 说明 |
+|---|---|---|---|---|
+| 支付宝 | `alipay` | CNY | ¥0.01 | 移动网页支付，以及桌面端二维码支付流程 |
+| Stripe | `stripe` | EUR (€) | ¥5.00 | Checkout Sessions、可配置货币转换和 Webhook 兜底 |
+| PayPal | `paypal` | GBP (£) | ¥1.00 | Orders API、capture、同步返回和 Webhook 兜底 |
+| 微信支付 V2 | `wxpay` | CNY | ¥0.01 | 微信支付 V2 统一下单（默认停用） |
+| 微信支付 V3 | `wxpayn` | CNY | ¥0.01 | 微信支付 V3 API（默认停用） |
 
 每个支付平台默认关闭。完成凭据、回调地址、货币和渠道配置检查后，再单独启用对应渠道。不要使用占位密钥直接开启生产支付渠道。
 
