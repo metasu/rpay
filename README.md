@@ -196,7 +196,6 @@ See the WordPress section in [`DEPLOY.md`](DEPLOY.md) for file lists, configurat
 ### Documentation
 
 - [`DEPLOY.md`](DEPLOY.md) - complete bilingual-ready deployment reference currently maintained in Chinese, including database initialization, systemd, reverse proxy, PayPal, Stripe, and WordPress integration.
-- [`PROGRESS.md`](PROGRESS.md) - project progress and implementation notes.
 - [`Cargo.toml`](Cargo.toml) - Rust version, dependencies, and feature configuration.
 - [`config/config.example.toml`](config/config.example.toml) - example listener and public URL values.
 - [`database/schema.sql`](database/schema.sql) - complete database schema.
@@ -400,7 +399,6 @@ WordPress 适配层使用 MD5 对商户请求签名，并显式传递支付类�
 ### 文档索引
 
 - [`DEPLOY.md`](DEPLOY.md)：完整部署参考，当前主要以中文维护，包含数据库初始化、systemd、反向代理、PayPal、Stripe 和 WordPress 接入。
-- [`PROGRESS.md`](PROGRESS.md)：项目进度和实现记录。
 - [`Cargo.toml`](Cargo.toml)：Rust 版本、依赖和功能配置。
 - [`config/config.example.toml`](config/config.example.toml)：监听地址和公网 URL 示例。
 - [`database/schema.sql`](database/schema.sql)：完整数据库结构。
