@@ -797,9 +797,9 @@ ON DUPLICATE KEY UPDATE v = VALUES(v);
 ```sql
 INSERT INTO pay_type (id, name, device, showname, status) VALUES
   (1, 'alipay', 0, '支付宝', 1),
-  (2, 'wxpay',  0, '微信支付', 1),
+  (2, 'stripe', 0, 'Stripe', 1),
   (3, 'paypal', 0, 'PayPal', 1),
-  (4, 'stripe', 0, 'Stripe', 1)
+  (4, 'wxpay',  0, '微信支付', 1)
 ON DUPLICATE KEY UPDATE name=VALUES(name), showname=VALUES(showname), status=VALUES(status);
 ```
 
@@ -862,9 +862,9 @@ VALUES (2, 0, 1, 'alipay', '支付宝', 100.00, 1, '2', 0, 0, '', '', NULL, NULL
   0)
 ON DUPLICATE KEY UPDATE name=VALUES(name);
 
--- Stripe（type=4 对应 pay_type.id=4, plugin=stripe）
+-- Stripe（type=2 对应 pay_type.id=2, plugin=stripe）
 INSERT INTO pay_channel (id, mode, type, plugin, name, rate, status, apptype, daytop, daystatus, paymin, paymax, appwxmp, appwxa, costrate, config, daymaxorder)
-VALUES (3, 0, 4, 'stripe', 'Stripe', 100.00, 1, NULL, 0, 0, '', '', NULL, NULL, 0.00,
+VALUES (3, 0, 2, 'stripe', 'Stripe', 100.00, 1, NULL, 0, 0, '', '', NULL, NULL, 0.00,
   '{"appsecret":"sk_live_填入你的SecretKey","appkey":"whsec_填入WebhookSigningSecret","currency":"eur","currency_rate":7.8}',
   0)
 ON DUPLICATE KEY UPDATE name=VALUES(name), status=VALUES(status);
@@ -876,23 +876,23 @@ VALUES (4, 0, 3, 'paypal', 'PayPal', 100.00, 1, NULL, 0, 0, '', '', NULL, NULL, 
   0)
 ON DUPLICATE KEY UPDATE name=VALUES(name), status=VALUES(status);
 
--- 微信支付V2（type=2, plugin=wxpay）
+-- 微信支付V2（type=4 对应 pay_type.id=4, plugin=wxpay）
 INSERT INTO pay_channel (id, mode, type, plugin, name, rate, status, apptype, daytop, daystatus, paymin, paymax, appwxmp, appwxa, costrate, config, daymaxorder)
-VALUES (5, 0, 2, 'wxpay', '微信支付(V2)', 100.00, 0, NULL, 0, 0, NULL, NULL, NULL, NULL, NULL,
+VALUES (5, 0, 4, 'wxpay', '微信支付(V2)', 100.00, 0, NULL, 0, 0, NULL, NULL, NULL, NULL, NULL,
   '{"appid":"","appmchid":"","appkey":""}',
   0)
 ON DUPLICATE KEY UPDATE name=VALUES(name);
 
--- 微信支付V3（type=2, plugin=wxpayn）
+-- 微信支付V3（type=4 对应 pay_type.id=4, plugin=wxpayn；与 V2 共用 type）
 INSERT INTO pay_channel (id, mode, type, plugin, name, rate, status, apptype, daytop, daystatus, paymin, paymax, appwxmp, appwxa, costrate, config, daymaxorder)
-VALUES (6, 0, 2, 'wxpayn', '微信支付(V3)', 100.00, 0, NULL, 0, 0, NULL, NULL, NULL, NULL, NULL,
+VALUES (6, 0, 4, 'wxpayn', '微信支付(V3)', 100.00, 0, NULL, 0, 0, NULL, NULL, NULL, NULL, NULL,
   '{"appid":"","appmchid":"","appsecret":"","appkey":"","mch_private_key":"","platform_public_key":"","publickeyid":""}',
   0)
 ON DUPLICATE KEY UPDATE name=VALUES(name);
 ```
 
 > **字段说明**：
-> - `type`：关联 `pay_type.id`（1=支付宝, 2=微信, 3=PayPal, 4=Stripe）；
+> - `type`：关联 `pay_type.id`（1=支付宝, 2=Stripe, 3=PayPal, 4=微信 V2/V3；两个微信插件暂不区分）；
 > - `plugin`：rpay 运行时分发名，例如 `alipay`、`wxpay`、`wxpayn`、`paypal`、`stripe`；
 > - `status`：1=启用，0=禁用；先确认密钥和回调可用，再逐个启用；
 > - `config`：JSON 格式的渠道配置，不同插件字段不同；
@@ -1459,9 +1459,9 @@ PayPal 支持无 PayPal 账户的访客直接用信用卡（Visa/Mastercard 等�
 | pay_type.id | pay_type.name | pay_channel.plugin | 说明 |
 |-------------|---------------|---------------------|------|
 | 1 | alipay | alipay | 支付宝 |
-| 2 | wxpay | wxpay / wxpayn | 微信支付 V2/V3 |
+| 2 | stripe | stripe | Stripe |
 | 3 | paypal | paypal | PayPal |
-| 4 | stripe | stripe | Stripe |
+| 4 | wxpay | wxpay / wxpayn | 微信支付 V2/V3，两个插件共用 type=4 |
 
 > **注意**：`pay_type.status` 也必须为 `1`（启用），否则该支付方式不可用。
 
