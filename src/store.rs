@@ -239,13 +239,13 @@ impl Store {
         success: bool,
     ) -> Result<(), StoreError> {
         if success {
-            sqlx::query("UPDATE pay_order SET notify=1,notifytime=NOW() WHERE trade_no=?")
+            sqlx::query("UPDATE pay_order SET notify=99,notifytime=NOW() WHERE trade_no=?")
                 .bind(trade_no)
                 .execute(&self.pool)
                 .await?;
         } else {
             sqlx::query(
-                "UPDATE pay_order SET notify=notify+1,notifytime=NOW() WHERE trade_no=? AND notify<1",
+                "UPDATE pay_order SET notify=notify+1,notifytime=NOW() WHERE trade_no=?",
             )
             .bind(trade_no)
             .execute(&self.pool)
@@ -257,7 +257,7 @@ impl Store {
     /// Orders that are paid but not yet successfully notified, for background retry.
     pub async fn pending_notifications(&self, limit: i64) -> Result<Vec<OrderRow>, StoreError> {
         let rows = sqlx::query(
-            "SELECT trade_no,out_trade_no,api_trade_no,uid,type,channel,name,CAST(money AS CHAR) AS money,CAST(realmoney AS CHAR) AS realmoney,notify_url,return_url,param,status,payurl,buyer FROM pay_order WHERE status=1 AND notify=0 AND (notifytime IS NULL OR notifytime < DATE_SUB(NOW(), INTERVAL 10 SECOND)) LIMIT ?",
+            "SELECT trade_no,out_trade_no,api_trade_no,uid,type,channel,name,CAST(money AS CHAR) AS money,CAST(realmoney AS CHAR) AS realmoney,notify_url,return_url,param,status,payurl,buyer FROM pay_order WHERE status=1 AND notify<5 AND (notifytime IS NULL OR notifytime < DATE_SUB(NOW(), INTERVAL 10 SECOND)) LIMIT ?",
         )
         .bind(limit)
         .fetch_all(&self.pool)

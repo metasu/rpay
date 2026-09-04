@@ -632,13 +632,32 @@ async fn notify_merchant(state: &AppState, trade_no: &str) -> Result<(), ()> {
         .await
     {
         Ok(resp) => match resp.text().await {
-            Ok(body) => body.trim().eq_ignore_ascii_case("success"),
-            Err(_) => false,
+            Ok(body) => {
+                let ok = body.trim().eq_ignore_ascii_case("success");
+                if !ok {
+                    tracing::warn!(
+                        trade_no = %trade_no,
+                        out_trade_no = %order.out_trade_no,
+                        url = %url,
+                        body = %body,
+                        "merchant notify returned non-success body"
+                    );
+                }
+                ok
+            }
+            Err(e) => {
+                tracing::warn!(trade_no = %trade_no, error = %e, "merchant notify: failed to read response body");
+                false
+            }
         },
-        Err(_) => false,
+        Err(e) => {
+            tracing::warn!(trade_no = %trade_no, url = %url, error = %e, "merchant notify: HTTP request failed");
+            false
+        }
     };
     let _ = state.store.record_notify_attempt(trade_no, success).await;
     if success {
+        tracing::info!(trade_no = %trade_no, "merchant notify succeeded");
         Ok(())
     } else {
         Err(())
@@ -646,12 +665,16 @@ async fn notify_merchant(state: &AppState, trade_no: &str) -> Result<(), ()> {
 }
 
 pub async fn retry_pending_notifications(state: AppState) {
+    tracing::info!("retry_pending_notifications task started");
     let mut interval = tokio::time::interval(std::time::Duration::from_secs(15));
     loop {
         interval.tick().await;
         let Ok(orders) = state.store.pending_notifications(20).await else {
             continue;
         };
+        if !orders.is_empty() {
+            tracing::info!("retry_pending_notifications: {} pending orders", orders.len());
+        }
         for order in orders {
             let _ = notify_merchant(&state, &order.trade_no).await;
         }

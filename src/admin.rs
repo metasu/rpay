@@ -729,7 +729,12 @@ async fn render_order_detail(state: &AppState, trade_no: &str, notice: Option<&s
         buyer = escape(order.buyer.as_deref().unwrap_or("-")),
         status = status_badge(order.status),
         refund_disabled = if order.status == 1 { "" } else { "disabled" },
-        notify_status = if order.notify_status > 0 { format!("已通知({})", order.notify_status) } else { "未通知".to_string() },
+        notify_status = match order.notify_status {
+            0 => "未通知".to_string(),
+            99 => "已通知".to_string(),
+            n if n >= 5 => format!("通知失败({n})(已放弃)"),
+            n => format!("通知失败({n})"),
+        },
         addtime = order.addtime.map(|t| t.to_string()).unwrap_or_else(|| "-".into()),
         endtime = order.endtime.map(|t| t.to_string()).unwrap_or_else(|| "-".into()),
         domain = escape(order.domain.as_deref().unwrap_or("-")),
