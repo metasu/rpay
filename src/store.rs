@@ -828,11 +828,20 @@ impl Store {
     }
 
     pub async fn order_update_status(&self, trade_no: &str, status: i8) -> Result<bool, StoreError> {
-        let result = sqlx::query("UPDATE pay_order SET status=? WHERE trade_no=?")
-            .bind(status)
+        let result = if status == 1 {
+            sqlx::query(
+                "UPDATE pay_order SET status=1,endtime=COALESCE(endtime,NOW()),date=COALESCE(date,CURDATE()),notify=IF(notify>=5,0,notify) WHERE trade_no=?",
+            )
             .bind(trade_no)
             .execute(&self.pool)
-            .await?;
+            .await?
+        } else {
+            sqlx::query("UPDATE pay_order SET status=? WHERE trade_no=?")
+                .bind(status)
+                .bind(trade_no)
+                .execute(&self.pool)
+                .await?
+        };
         Ok(result.rows_affected() > 0)
     }
 
