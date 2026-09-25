@@ -185,6 +185,7 @@ See the WordPress section in [`DEPLOY.md`](DEPLOY.md) for file lists, configurat
 - Keep database URLs, provider secrets, private keys, webhook secrets, administrator credentials, and merchant keys outside Git.
 - Use a unique random `syskey` for every instance. Changing it invalidates existing sessions.
 - Use HTTPS for the public base URL. Provider callbacks must be able to reach the configured public endpoint.
+- If the public domain or base URL changes, update `--public-base-url`/`RPAY_PUBLIC_BASE_URL` and update the webhook URLs (`/notify/stripe`, `/notify/paypal`) registered in the Stripe and PayPal dashboards. Recreating an endpoint issues a new signing secret/Webhook ID that must also be updated in the channel `config` (`appkey`/`webhook_id`). Alipay and WeChat notify URLs are generated per request from the base URL and need no dashboard changes.
 - Import the complete schema. Creating only the four commonly used tables is insufficient; the application expects the full EasyPay-compatible schema.
 - Configure `pay_channel.type` to match the corresponding `pay_type.id`, and ensure both the payment type and channel are enabled.
 - Store the database URL in a mode-600 file without a trailing newline when using `--database-url-file`.
@@ -388,6 +389,7 @@ WordPress 适配层使用 MD5 对商户请求签名，并显式传递支付类�
 - 数据库连接串、支付平台密钥、私钥、Webhook secret、管理员凭据和商户 key 不得提交到 Git。
 - 每个实例都要使用独立随机 `syskey`。修改后已有 Session 会失效。
 - 公网地址必须使用 HTTPS，支付平台回调必须能访问配置好的公网地址。
+- 网关对外域名或访问地址变更时，除更新 `--public-base-url`/`RPAY_PUBLIC_BASE_URL` 外，还必须到 Stripe、PayPal 等收单后台把已注册的 Webhook 地址（`/notify/stripe`、`/notify/paypal`）改成新域名；重建端点会签发新的 Signing Secret/Webhook ID，需同步更新渠道 `config` 里的 `appkey`/`webhook_id`。支付宝和微信的回调地址由程序按域名动态生成，无需在后台修改。
 - 必须导入完整数据库结构。只创建常用的四张表是不够的，程序依赖完整的易支付兼容表结构。
 - `pay_channel.type` 必须对应 `pay_type.id`，且支付方式和实际渠道都必须处于启用状态。
 - 使用 `--database-url-file` 时，数据库 URL 文件应设置为 600 权限，并且末尾不要有换行。
